@@ -42,7 +42,9 @@
                     <type arch="x86_64" machine="xenpv">linux</type>
                 {% endif %}
                 <kernel>{{ vm.storage.kernels_dir }}/vmlinuz</kernel>
-                <initrd>{{ vm.storage.kernels_dir }}/initramfs</initrd>
+                <!--
+                    <initrd>{{ vm.storage.kernels_dir }}/initramfs</initrd>
+                -->
             {% endif %}
             {% if vm.kernel %}
                 {% if vm.features.check_with_template('no-default-kernelopts', False) -%}
