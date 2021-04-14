@@ -138,7 +138,7 @@ class LinuxModules(Volume):
     def verify(self):
         if self.vid:
             _check_path(self.vmlinuz)
-            _check_path(self.initramfs)
+          #  _check_path(self.initramfs)
 
     def block_device(self):
         path = self.path
