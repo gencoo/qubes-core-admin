@@ -1018,13 +1018,13 @@ class QubesVM(qubes.vm.mix.net.NetVMMixin, qubes.vm.BaseVM):
                 self, self.property_get_def(name), newvalue,
                 'Kernel {!r} not installed'.format(
                     newvalue))
-        for filename in ('vmlinuz', None):
-            if not os.path.exists(os.path.join(dirname, filename)):
-                raise qubes.exc.QubesPropertyValueError(
-                    self, self.property_get_def(name), newvalue,
-                    'Kernel {!r} not properly installed: '
-                    'missing {!r} file'.format(
-                        newvalue, filename))
+        for filename in ('vmlinuz', 'initramfs'):
+                os.path.exists(os.path.join(dirname, filename))
+             #   raise qubes.exc.QubesPropertyValueError(
+             #       self, self.property_get_def(name), newvalue,
+             #       'Kernel {!r} not properly installed: '
+             #       'missing {!r} file'.format(
+             #           newvalue, filename))
 
     @qubes.events.handler('property-pre-set:autostart')
     def on_property_pre_set_autostart(self, event, name, newvalue,
