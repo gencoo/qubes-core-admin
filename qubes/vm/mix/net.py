@@ -292,7 +292,7 @@ class NetVMMixin(qubes.events.Emitter):
                 vm.log.warning('Cannot attach network', exc_info=1)
 
     @qubes.events.handler('domain-pre-shutdown')
-    def on_domain_pre_shutdown(self, event, force=False):
+    def on_domain_pre_shutdown(self, event, force=True):
         ''' Checks before NetVM shutdown if any connected domains are running.
             If `force` is `True` tries to detach network interfaces of connected
             vms
