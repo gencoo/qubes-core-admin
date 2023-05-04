@@ -118,20 +118,21 @@ class AbstractQubesAPI:
         #: :py:class:`qubes.Qubes` object
         self.app = app
 
-        #: source qube
-        self.src = self.app.domains[src.decode('ascii')]
-
         try:
+            vm = src.decode('ascii')
+            #: source qube
+            self.src = self.app.domains[vm]
+
+            vm = dest.decode('ascii')
             #: destination qube
-            self.dest = self.app.domains[dest.decode('ascii')]
+            self.dest = self.app.domains[vm]
         except KeyError:
             # normally this should filtered out by qrexec policy, but there are
             # two cases it might not be:
             # 1. The call comes from dom0, which bypasses qrexec policy
             # 2. Domain was removed between checking the policy and here
-            # For uniform handling on the client side, treat this as permission
-            # denied error too
-            raise PermissionDenied
+            # we inform the client accordingly
+            raise qubes.exc.QubesVMNotFoundError(vm)
 
         #: argument
         self.arg = arg.decode('ascii')
@@ -209,6 +210,15 @@ class AbstractQubesAPI:
         if not predicate:
             raise PermissionDenied()
 
+    def validate_size(self, untrusted_size: bytes) -> int:
+        self.enforce(isinstance(untrusted_size, bytes))
+        if not untrusted_size.isdigit():
+            raise qubes.api.ProtocolError('Size must be ASCII digits (only)')
+        if len(untrusted_size) >= 20:
+            raise qubes.api.ProtocolError('Sizes limited to 19 decimal digits')
+        if untrusted_size[0] == 48 and untrusted_size != b'0':
+            raise qubes.api.ProtocolError('Spurious leading zeros not allowed')
+        return int(untrusted_size)
 
 class QubesDaemonProtocol(asyncio.Protocol):
     buffer_size = 65536
@@ -240,7 +250,8 @@ class QubesDaemonProtocol(asyncio.Protocol):
         self.transport = None
         self.connections.remove(self)
 
-    def data_received(self, untrusted_data):  # pylint: disable=arguments-differ
+    # pylint: disable=arguments-differ,arguments-renamed
+    def data_received(self, untrusted_data):
         if self.len_untrusted_buffer + len(untrusted_data) > self.buffer_size:
             self.app.log.warning('request too long')
             self.transport.abort()
@@ -249,6 +260,7 @@ class QubesDaemonProtocol(asyncio.Protocol):
 
         self.len_untrusted_buffer += \
             self.untrusted_buffer.write(untrusted_data)
+    # pylint: enable=arguments-differ,arguments-renamed
 
     def eof_received(self):
         try:
@@ -278,12 +290,11 @@ class QubesDaemonProtocol(asyncio.Protocol):
 
         return True
 
-    @asyncio.coroutine
-    def respond(self, src, meth, dest, arg, *, untrusted_payload):
+    async def respond(self, src, meth, dest, arg, *, untrusted_payload):
         try:
             self.mgmt = self.handler(self.app, src, meth, dest, arg,
                 self.send_event)
-            response = yield from self.mgmt.execute(
+            response = await self.mgmt.execute(
                 untrusted_payload=untrusted_payload)
             assert not (self.event_sent and response)
             if self.transport is None:
@@ -396,8 +407,7 @@ def cleanup_socket(sockpath, force):
             raise FileExistsError(errno.EEXIST,
                 'socket already exists: {!r}'.format(sockpath))
 
-@asyncio.coroutine
-def create_servers(*args, force=False, loop=None, **kwargs):
+async def create_servers(*args, force=False, loop=None, **kwargs):
     '''Create multiple Qubes API servers
 
     :param qubes.Qubes app: the app that is a backend of the servers
@@ -428,7 +438,7 @@ def create_servers(*args, force=False, loop=None, **kwargs):
             if os.path.exists(sockpath):
                 cleanup_socket(sockpath, force)
 
-            server = yield from loop.create_unix_server(
+            server = await loop.create_unix_server(
                 functools.partial(QubesDaemonProtocol, handler, **kwargs),
                 sockpath)
 
@@ -445,8 +455,8 @@ def create_servers(*args, force=False, loop=None, **kwargs):
                     pass
             server.close()
         if servers:
-            yield from asyncio.wait([
-                server.wait_closed() for server in servers])
+            await asyncio.wait([asyncio.create_task(server.wait_closed())
+                                for server in servers])
         raise
     finally:
         os.umask(old_umask)

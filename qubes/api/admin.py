@@ -97,8 +97,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vmclass.List', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def vmclass_list(self):
+    async def vmclass_list(self):
         """List all VM classes"""
         self.enforce(not self.arg)
         self.enforce(self.dest.name == 'dom0')
@@ -111,8 +110,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.List', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def vm_list(self):
+    async def vm_list(self):
         """List all the domains"""
         self.enforce(not self.arg)
 
@@ -129,15 +127,13 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.property.List', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_property_list(self):
+    async def vm_property_list(self):
         """List all properties on a qube"""
         return self._property_list(self.dest)
 
     @qubes.api.method('admin.property.List', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def property_list(self):
+    async def property_list(self):
         """List all global properties"""
         self.enforce(self.dest.name == 'dom0')
         return self._property_list(self.app)
@@ -151,15 +147,13 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.property.Get', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_property_get(self):
+    async def vm_property_get(self):
         """Get a value of one property"""
         return self._property_get(self.dest)
 
     @qubes.api.method('admin.property.Get', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def property_get(self):
+    async def property_get(self):
         """Get a value of one global property"""
         self.enforce(self.dest.name == 'dom0')
         return self._property_get(self.app)
@@ -191,23 +185,20 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
             value = getattr(dest, str(prop))
         except AttributeError:
             return 'default=True type={} '.format(property_type)
-        else:
-            return 'default={} type={} {}'.format(
-                str(dest.property_is_default(prop)),
-                property_type,
-                str(value) if value is not None else '')
+        return 'default={} type={} {}'.format(
+            str(dest.property_is_default(prop)),
+            property_type,
+            str(value) if value is not None else '')
 
     @qubes.api.method('admin.vm.property.GetAll', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_property_get_all(self):
+    async def vm_property_get_all(self):
         """Get values of all VM properties"""
         return self._property_get_all(self.dest)
 
     @qubes.api.method('admin.property.GetAll', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def property_get_all(self):
+    async def property_get_all(self):
         """Get value all global properties"""
         self.enforce(self.dest.name == 'dom0')
         return self._property_get_all(self.app)
@@ -229,15 +220,13 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.property.GetDefault', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_property_get_default(self):
+    async def vm_property_get_default(self):
         """Get a value of one property"""
         return self._property_get_default(self.dest)
 
     @qubes.api.method('admin.property.GetDefault', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def property_get_default(self):
+    async def property_get_default(self):
         """Get a value of one global property"""
         self.enforce(self.dest.name == 'dom0')
         return self._property_get_default(self.app)
@@ -265,23 +254,20 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
             value = property_def.get_default(dest)
         except AttributeError:
             return None
-        else:
-            return 'type={} {}'.format(
-                property_type,
-                str(value) if value is not None else '')
+        return 'type={} {}'.format(
+            property_type,
+            str(value) if value is not None else '')
 
     @qubes.api.method('admin.vm.property.Set',
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_property_set(self, untrusted_payload):
+    async def vm_property_set(self, untrusted_payload):
         """Set property value"""
         return self._property_set(self.dest,
             untrusted_payload=untrusted_payload)
 
     @qubes.api.method('admin.property.Set',
         scope='global', write=True)
-    @asyncio.coroutine
-    def property_set(self, untrusted_payload):
+    async def property_set(self, untrusted_payload):
         """Set property value"""
         self.enforce(self.dest.name == 'dom0')
         return self._property_set(self.app,
@@ -301,15 +287,13 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.property.Help', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_property_help(self):
+    async def vm_property_help(self):
         """Get help for one property"""
         return self._property_help(self.dest)
 
     @qubes.api.method('admin.property.Help', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def property_help(self):
+    async def property_help(self):
         """Get help for one property"""
         self.enforce(self.dest.name == 'dom0')
         return self._property_help(self.app)
@@ -329,15 +313,13 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.property.Reset', no_payload=True,
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_property_reset(self):
+    async def vm_property_reset(self):
         """Reset a property to a default value"""
         return self._property_reset(self.dest)
 
     @qubes.api.method('admin.property.Reset', no_payload=True,
         scope='global', write=True)
-    @asyncio.coroutine
-    def property_reset(self):
+    async def property_reset(self):
         """Reset a property to a default value"""
         self.enforce(self.dest.name == 'dom0')
         return self._property_reset(self.app)
@@ -353,8 +335,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.volume.List', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_volume_list(self):
+    async def vm_volume_list(self):
         self.enforce(not self.arg)
 
         volume_names = self.fire_event_for_filter(self.dest.volumes.keys())
@@ -362,8 +343,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.volume.Info', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_volume_info(self):
+    async def vm_volume_info(self):
         self.enforce(self.arg in self.dest.volumes.keys())
 
         self.fire_event_for_permission()
@@ -372,7 +352,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         # properties defined in API
         volume_properties = [
             'pool', 'vid', 'size', 'usage', 'rw', 'source', 'path',
-            'save_on_stop', 'snap_on_start', 'revisions_to_keep']
+            'save_on_stop', 'snap_on_start', 'revisions_to_keep', 'ephemeral']
 
         def _serialize(value):
             if callable(value):
@@ -390,8 +370,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.volume.ListSnapshots', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_volume_listsnapshots(self):
+    async def vm_volume_listsnapshots(self):
         self.enforce(self.arg in self.dest.volumes.keys())
 
         volume = self.dest.volumes[self.arg]
@@ -403,8 +382,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.volume.Revert',
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_volume_revert(self, untrusted_payload):
+    async def vm_volume_revert(self, untrusted_payload):
         self.enforce(self.arg in self.dest.volumes.keys())
         untrusted_revision = untrusted_payload.decode('ascii').strip()
         del untrusted_payload
@@ -415,15 +393,14 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         revision = untrusted_revision
 
         self.fire_event_for_permission(volume=volume, revision=revision)
-        yield from qubes.utils.coro_maybe(volume.revert(revision))
+        await qubes.utils.coro_maybe(volume.revert(revision))
         self.app.save()
 
     # write=True because this allow to clone VM - and most likely modify that
     # one - still having the same data
     @qubes.api.method('admin.vm.volume.CloneFrom', no_payload=True,
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_volume_clone_from(self):
+    async def vm_volume_clone_from(self):
         self.enforce(self.arg in self.dest.volumes.keys())
 
         volume = self.dest.volumes[self.arg]
@@ -443,8 +420,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.volume.CloneTo',
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_volume_clone_to(self, untrusted_payload):
+    async def vm_volume_clone_to(self, untrusted_payload):
         self.enforce(self.arg in self.dest.volumes.keys())
         untrusted_token = untrusted_payload.decode('ascii').strip()
         del untrusted_payload
@@ -464,33 +440,24 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
         self.fire_event_for_permission(src_volume=src_volume,
             dst_volume=dst_volume)
-        self.dest.volumes[self.arg] = yield from qubes.utils.coro_maybe(
+        self.dest.volumes[self.arg] = await qubes.utils.coro_maybe(
             dst_volume.import_volume(src_volume))
         self.app.save()
 
     @qubes.api.method('admin.vm.volume.Resize',
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_volume_resize(self, untrusted_payload):
+    async def vm_volume_resize(self, untrusted_payload):
         self.enforce(self.arg in self.dest.volumes.keys())
-        untrusted_size = untrusted_payload.decode('ascii').strip()
-        del untrusted_payload
-        self.enforce(untrusted_size.isdigit())   # only digits, forbid '-' too
-        self.enforce(len(untrusted_size) <= 20)  # limit to about 2^64
-
-        size = int(untrusted_size)
-
+        size = self.validate_size(untrusted_payload.strip())
         self.fire_event_for_permission(size=size)
-
         try:
-            yield from self.dest.storage.resize(self.arg, size)
+            await self.dest.storage.resize(self.arg, size)
         finally:  # even if calling qubes.ResizeDisk inside the VM failed
             self.app.save()
 
     @qubes.api.method('admin.vm.volume.Clear', no_payload=True,
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_volume_clear(self):
+    async def vm_volume_clear(self):
         self.enforce(self.arg in self.dest.volumes.keys())
 
         self.fire_event_for_permission()
@@ -499,12 +466,12 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         size = volume.size
 
         # Clear the volume by importing empty data into it
-        path = yield from self.dest.storage.import_data(self.arg, size)
+        path = await self.dest.storage.import_data(self.arg, size)
         self.dest.fire_event('domain-volume-import-begin',
             volume=self.arg, size=size)
         pathlib.Path(path).touch()
         try:
-            yield from self.dest.storage.import_data_end(self.arg, True)
+            await self.dest.storage.import_data_end(self.arg, True)
         except:
             self.dest.fire_event('domain-volume-import-end',
                 volume=self.arg, success=False)
@@ -515,17 +482,9 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.volume.Set.revisions_to_keep',
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_volume_set_revisions_to_keep(self, untrusted_payload):
+    async def vm_volume_set_revisions_to_keep(self, untrusted_payload):
         self.enforce(self.arg in self.dest.volumes.keys())
-        try:
-            untrusted_value = int(untrusted_payload.decode('ascii'))
-        except (UnicodeDecodeError, ValueError):
-            raise qubes.api.ProtocolError('Invalid value')
-        del untrusted_payload
-        self.enforce(untrusted_value >= 0)
-        newvalue = untrusted_value
-        del untrusted_value
+        newvalue = self.validate_size(untrusted_payload)
 
         self.fire_event_for_permission(newvalue=newvalue)
 
@@ -534,8 +493,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.volume.Set.rw',
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_volume_set_rw(self, untrusted_payload):
+    async def vm_volume_set_rw(self, untrusted_payload):
         self.enforce(self.arg in self.dest.volumes.keys())
         try:
             newvalue = qubes.property.bool(None, None,
@@ -552,10 +510,28 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         self.dest.volumes[self.arg].rw = newvalue
         self.app.save()
 
+    @qubes.api.method('admin.vm.volume.Set.ephemeral',
+        scope='local', write=True)
+    async def vm_volume_set_ephemeral(self, untrusted_payload):
+        self.enforce(self.arg in self.dest.volumes.keys())
+        try:
+            newvalue = qubes.property.bool(None, None,
+                untrusted_payload.decode('ascii'))
+        except (UnicodeDecodeError, ValueError):
+            raise qubes.api.ProtocolError('Invalid value')
+        del untrusted_payload
+
+        self.fire_event_for_permission(newvalue=newvalue)
+
+        if not self.dest.is_halted():
+            raise qubes.exc.QubesVMNotHaltedError(self.dest)
+
+        self.dest.volumes[self.arg].ephemeral = newvalue
+        self.app.save()
+
     @qubes.api.method('admin.vm.tag.List', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_tag_list(self):
+    async def vm_tag_list(self):
         self.enforce(not self.arg)
 
         tags = self.dest.tags
@@ -566,8 +542,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.tag.Get', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_tag_get(self):
+    async def vm_tag_get(self):
         qubes.vm.Tags.validate_tag(self.arg)
 
         self.fire_event_for_permission()
@@ -576,8 +551,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.tag.Set', no_payload=True,
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_tag_set(self):
+    async def vm_tag_set(self):
         qubes.vm.Tags.validate_tag(self.arg)
 
         self.fire_event_for_permission()
@@ -587,8 +561,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.tag.Remove', no_payload=True,
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_tag_remove(self):
+    async def vm_tag_remove(self):
         qubes.vm.Tags.validate_tag(self.arg)
 
         self.fire_event_for_permission()
@@ -601,8 +574,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.Console', no_payload=True,
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_console(self):
+    async def vm_console(self):
         self.enforce(not self.arg)
 
         self.fire_event_for_permission()
@@ -618,8 +590,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.pool.List', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def pool_list(self):
+    async def pool_list(self):
         self.enforce(not self.arg)
         self.enforce(self.dest.name == 'dom0')
 
@@ -629,8 +600,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.pool.ListDrivers', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def pool_listdrivers(self):
+    async def pool_listdrivers(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(not self.arg)
 
@@ -643,8 +613,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.pool.Info', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def pool_info(self):
+    async def pool_info(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(self.arg in self.app.pools.keys())
 
@@ -675,8 +644,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.pool.UsageDetails', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def pool_usage(self):
+    async def pool_usage(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(self.arg in self.app.pools.keys())
 
@@ -695,11 +663,12 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.pool.Add',
         scope='global', write=True)
-    @asyncio.coroutine
-    def pool_add(self, untrusted_payload):
+    async def pool_add(self, untrusted_payload):
         self.enforce(self.dest.name == 'dom0')
-        drivers = qubes.storage.pool_drivers()
-        self.enforce(self.arg in drivers)
+        if self.arg not in qubes.storage.pool_drivers():
+            raise qubes.exc.QubesException(
+                'unexpected driver name: ' + self.arg)
+
         untrusted_pool_config = untrusted_payload.decode('ascii').splitlines()
         del untrusted_payload
         self.enforce(all(('=' in line) for line in untrusted_pool_config))
@@ -731,26 +700,24 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         self.fire_event_for_permission(name=pool_name,
             pool_config=pool_config)
 
-        yield from self.app.add_pool(name=pool_name, driver=self.arg,
+        await self.app.add_pool(name=pool_name, driver=self.arg,
             **pool_config)
         self.app.save()
 
     @qubes.api.method('admin.pool.Remove', no_payload=True,
         scope='global', write=True)
-    @asyncio.coroutine
-    def pool_remove(self):
+    async def pool_remove(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(self.arg in self.app.pools.keys())
 
         self.fire_event_for_permission()
 
-        yield from self.app.remove_pool(self.arg)
+        await self.app.remove_pool(self.arg)
         self.app.save()
 
     @qubes.api.method('admin.pool.volume.List', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def pool_volume_list(self):
+    async def pool_volume_list(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(self.arg in self.app.pools.keys())
 
@@ -761,29 +728,38 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.pool.Set.revisions_to_keep',
         scope='global', write=True)
-    @asyncio.coroutine
-    def pool_set_revisions_to_keep(self, untrusted_payload):
+    async def pool_set_revisions_to_keep(self, untrusted_payload):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(self.arg in self.app.pools.keys())
         pool = self.app.pools[self.arg]
-        try:
-            untrusted_value = int(untrusted_payload.decode('ascii'))
-        except (UnicodeDecodeError, ValueError):
-            raise qubes.api.ProtocolError('Invalid value')
-        del untrusted_payload
-        self.enforce(untrusted_value >= 0)
-        newvalue = untrusted_value
-        del untrusted_value
+        newvalue = self.validate_size(untrusted_payload)
 
         self.fire_event_for_permission(newvalue=newvalue)
 
         pool.revisions_to_keep = newvalue
         self.app.save()
 
+    @qubes.api.method('admin.pool.Set.ephemeral_volatile',
+        scope='global', write=True)
+    async def pool_set_ephemeral(self, untrusted_payload):
+        self.enforce(self.dest.name == 'dom0')
+        self.enforce(self.arg in self.app.pools.keys())
+        pool = self.app.pools[self.arg]
+        try:
+            newvalue = qubes.property.bool(None, None,
+                untrusted_payload.decode('ascii', 'strict'))
+        except (UnicodeDecodeError, ValueError):
+            raise qubes.api.ProtocolError('Invalid value')
+        del untrusted_payload
+
+        self.fire_event_for_permission(newvalue=newvalue)
+
+        pool.ephemeral_volatile = newvalue
+        self.app.save()
+
     @qubes.api.method('admin.label.List', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def label_list(self):
+    async def label_list(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(not self.arg)
 
@@ -793,8 +769,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.label.Get', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def label_get(self):
+    async def label_get(self):
         self.enforce(self.dest.name == 'dom0')
 
         try:
@@ -808,8 +783,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.label.Index', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def label_index(self):
+    async def label_index(self):
         self.enforce(self.dest.name == 'dom0')
 
         try:
@@ -823,8 +797,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.label.Create',
         scope='global', write=True)
-    @asyncio.coroutine
-    def label_create(self, untrusted_payload):
+    async def label_create(self, untrusted_payload):
         self.enforce(self.dest.name == 'dom0')
 
         # don't confuse label name with label index
@@ -839,7 +812,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         else:
             raise qubes.exc.QubesValueError('label already exists')
 
-        untrusted_payload = untrusted_payload.decode('ascii').strip()
+        untrusted_payload = untrusted_payload.decode('ascii', 'strict').strip()
         self.enforce(len(untrusted_payload) == 8)
         self.enforce(untrusted_payload.startswith('0x'))
         # besides prefix, only hex digits are allowed
@@ -860,8 +833,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.label.Remove', no_payload=True,
         scope='global', write=True)
-    @asyncio.coroutine
-    def label_remove(self):
+    async def label_remove(self):
         self.enforce(self.dest.name == 'dom0')
 
         try:
@@ -883,12 +855,11 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.Start', no_payload=True,
         scope='local', execute=True)
-    @asyncio.coroutine
-    def vm_start(self):
+    async def vm_start(self):
         self.enforce(not self.arg)
         self.fire_event_for_permission()
         try:
-            yield from self.dest.start()
+            await self.dest.start()
         except libvirt.libvirtError as e:
             # change to QubesException, so will be reported to the user
             raise qubes.exc.QubesException('Start failed: ' + str(e) +
@@ -897,46 +868,41 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.Shutdown', no_payload=True,
         scope='local', execute=True)
-    @asyncio.coroutine
-    def vm_shutdown(self):
+    async def vm_shutdown(self):
         if self.arg:
             args = self.arg.split('+')
         else:
             args = []
         self.enforce(all(arg in ('force', 'wait') for arg in args))
-        force = ('force' in args)
-        wait = ('wait' in args)
+        force = 'force' in args
+        wait = 'wait' in args
         self.fire_event_for_permission(force=force, wait=wait)
-        yield from self.dest.shutdown(force=force, wait=wait)
+        await self.dest.shutdown(force=force, wait=wait)
 
     @qubes.api.method('admin.vm.Pause', no_payload=True,
         scope='local', execute=True)
-    @asyncio.coroutine
-    def vm_pause(self):
+    async def vm_pause(self):
         self.enforce(not self.arg)
         self.fire_event_for_permission()
-        yield from self.dest.pause()
+        await self.dest.pause()
 
     @qubes.api.method('admin.vm.Unpause', no_payload=True,
         scope='local', execute=True)
-    @asyncio.coroutine
-    def vm_unpause(self):
+    async def vm_unpause(self):
         self.enforce(not self.arg)
         self.fire_event_for_permission()
-        yield from self.dest.unpause()
+        await self.dest.unpause()
 
     @qubes.api.method('admin.vm.Kill', no_payload=True,
         scope='local', execute=True)
-    @asyncio.coroutine
-    def vm_kill(self):
+    async def vm_kill(self):
         self.enforce(not self.arg)
         self.fire_event_for_permission()
-        yield from self.dest.kill()
+        await self.dest.kill()
 
     @qubes.api.method('admin.Events', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def events(self):
+    async def events(self):
         self.enforce(not self.arg)
 
         # run until client connection is terminated
@@ -960,7 +926,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         self.send_event(self.app, 'connection-established')
 
         try:
-            yield from wait_for_cancel
+            await wait_for_cancel
         except asyncio.CancelledError:
             # the above waiting was already interrupted, this is all we need
             pass
@@ -977,16 +943,14 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.feature.List', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_feature_list(self):
+    async def vm_feature_list(self):
         self.enforce(not self.arg)
         features = self.fire_event_for_filter(self.dest.features.keys())
         return ''.join('{}\n'.format(feature) for feature in features)
 
     @qubes.api.method('admin.vm.feature.Get', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_feature_get(self):
+    async def vm_feature_get(self):
         # validation of self.arg done by qrexec-policy is enough
 
         self.fire_event_for_permission()
@@ -998,8 +962,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.feature.CheckWithTemplate', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_feature_checkwithtemplate(self):
+    async def vm_feature_checkwithtemplate(self):
         # validation of self.arg done by qrexec-policy is enough
 
         self.fire_event_for_permission()
@@ -1011,8 +974,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.feature.CheckWithNetvm', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_feature_checkwithnetvm(self):
+    async def vm_feature_checkwithnetvm(self):
         # validation of self.arg done by qrexec-policy is enough
 
         self.fire_event_for_permission()
@@ -1024,8 +986,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.feature.CheckWithAdminVM', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_feature_checkwithadminvm(self):
+    async def vm_feature_checkwithadminvm(self):
         # validation of self.arg done by qrexec-policy is enough
 
         self.fire_event_for_permission()
@@ -1037,8 +998,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.feature.CheckWithTemplateAndAdminVM',
         no_payload=True, scope='local', read=True)
-    @asyncio.coroutine
-    def vm_feature_checkwithtpladminvm(self):
+    async def vm_feature_checkwithtpladminvm(self):
         # validation of self.arg done by qrexec-policy is enough
 
         self.fire_event_for_permission()
@@ -1050,8 +1010,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.feature.Remove', no_payload=True,
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_feature_remove(self):
+    async def vm_feature_remove(self):
         # validation of self.arg done by qrexec-policy is enough
 
         self.fire_event_for_permission()
@@ -1063,8 +1022,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.feature.Set',
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_feature_set(self, untrusted_payload):
+    async def vm_feature_set(self, untrusted_payload):
         # validation of self.arg done by qrexec-policy is enough
         value = untrusted_payload.decode('ascii', errors='strict')
         del untrusted_payload
@@ -1076,7 +1034,6 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
     @qubes.api.method('admin.vm.Create.{endpoint}', endpoints=(ep.name
             for ep in pkg_resources.iter_entry_points(qubes.vm.VM_ENTRY_POINT)),
         scope='global', write=True)
-    @asyncio.coroutine
     def vm_create(self, endpoint, untrusted_payload=None):
         return self._vm_create(endpoint, allow_pool=False,
             untrusted_payload=untrusted_payload)
@@ -1084,12 +1041,12 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
     @qubes.api.method('admin.vm.CreateInPool.{endpoint}', endpoints=(ep.name
             for ep in pkg_resources.iter_entry_points(qubes.vm.VM_ENTRY_POINT)),
         scope='global', write=True)
-    @asyncio.coroutine
     def vm_create_in_pool(self, endpoint, untrusted_payload=None):
         return self._vm_create(endpoint, allow_pool=True,
             untrusted_payload=untrusted_payload)
 
-    def _vm_create(self, vm_type, allow_pool=False, untrusted_payload=None):
+    async def _vm_create(self, vm_type, allow_pool=False,
+                         untrusted_payload=None):
         self.enforce(self.dest.name == 'dom0')
 
         kwargs = {}
@@ -1170,7 +1127,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         vm.tags.add('created-by-' + str(self.src))
 
         try:
-            yield from vm.create_on_disk(pool=pool, pools=pools)
+            await vm.create_on_disk(pool=pool, pools=pools)
         except:
             del self.app.domains[vm]
             raise
@@ -1178,8 +1135,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.CreateDisposable', no_payload=True,
         scope='global', write=True)
-    @asyncio.coroutine
-    def create_disposable(self):
+    async def create_disposable(self):
         self.enforce(not self.arg)
 
         if self.dest.name == 'dom0':
@@ -1189,7 +1145,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
         self.fire_event_for_permission(dispvm_template=dispvm_template)
 
-        dispvm = yield from qubes.vm.dispvm.DispVM.from_appvm(dispvm_template)
+        dispvm = await qubes.vm.dispvm.DispVM.from_appvm(dispvm_template)
         # TODO: move this to extension (in race-free fashion, better than here)
         dispvm.tags.add('disp-created-by-' + str(self.src))
 
@@ -1221,8 +1177,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.deviceclass.List', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def deviceclass_list(self):
+    async def deviceclass_list(self):
         """List all DEVICES classes"""
         self.enforce(not self.arg)
         self.enforce(self.dest.name == 'dom0')
@@ -1236,8 +1191,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
             for ep in pkg_resources.iter_entry_points('qubes.devices')),
             no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_device_available(self, endpoint):
+    async def vm_device_available(self, endpoint):
         devclass = endpoint
         devices = self.dest.devices[devclass].available()
         if self.arg:
@@ -1271,8 +1225,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
             for ep in pkg_resources.iter_entry_points('qubes.devices')),
             no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_device_list(self, endpoint):
+    async def vm_device_list(self, endpoint):
         devclass = endpoint
         device_assignments = self.dest.devices[devclass].assignments()
         if self.arg:
@@ -1307,12 +1260,12 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
     @qubes.api.method('admin.vm.device.{endpoint}.Attach', endpoints=(ep.name
             for ep in pkg_resources.iter_entry_points('qubes.devices')),
         scope='local', write=True, execute=True)
-    @asyncio.coroutine
-    def vm_device_attach(self, endpoint, untrusted_payload):
+    async def vm_device_attach(self, endpoint, untrusted_payload):
         devclass = endpoint
         options = {}
         persistent = False
-        for untrusted_option in untrusted_payload.decode('ascii').split():
+        for untrusted_option in untrusted_payload.decode('ascii',
+                                                         'strict').split():
             try:
                 untrusted_key, untrusted_value = untrusted_option.split('=', 1)
             except ValueError:
@@ -1342,7 +1295,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         assignment = qubes.devices.DeviceAssignment(
             dev.backend_domain, dev.ident,
             options=options, persistent=persistent)
-        yield from self.dest.devices[devclass].attach(assignment)
+        await self.dest.devices[devclass].attach(assignment)
         self.app.save()
 
     # Attach/Detach action can both modify persistent state (with
@@ -1352,8 +1305,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
             for ep in pkg_resources.iter_entry_points('qubes.devices')),
             no_payload=True,
         scope='local', write=True, execute=True)
-    @asyncio.coroutine
-    def vm_device_detach(self, endpoint):
+    async def vm_device_detach(self, endpoint):
         devclass = endpoint
 
         # qrexec already verified that no strange characters are in self.arg
@@ -1368,7 +1320,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
         assignment = qubes.devices.DeviceAssignment(
             dev.backend_domain, dev.ident)
-        yield from self.dest.devices[devclass].detach(assignment)
+        await self.dest.devices[devclass].detach(assignment)
         self.app.save()
 
     # Attach/Detach action can both modify persistent state (with
@@ -1378,8 +1330,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         endpoints=(ep.name
             for ep in pkg_resources.iter_entry_points('qubes.devices')),
         scope='local', write=True, execute=True)
-    @asyncio.coroutine
-    def vm_device_set_persistent(self, endpoint, untrusted_payload):
+    async def vm_device_set_persistent(self, endpoint, untrusted_payload):
         devclass = endpoint
 
         self.enforce(untrusted_payload in (b'True', b'False'))
@@ -1403,8 +1354,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.firewall.Get', no_payload=True,
             scope='local', read=True)
-    @asyncio.coroutine
-    def vm_firewall_get(self):
+    async def vm_firewall_get(self):
         self.enforce(not self.arg)
 
         self.fire_event_for_permission()
@@ -1415,8 +1365,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.firewall.Set',
             scope='local', write=True)
-    @asyncio.coroutine
-    def vm_firewall_set(self, untrusted_payload):
+    async def vm_firewall_set(self, untrusted_payload):
         self.enforce(not self.arg)
         rules = []
         for untrusted_line in untrusted_payload.decode('ascii',
@@ -1432,16 +1381,14 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.firewall.Reload', no_payload=True,
             scope='local', execute=True)
-    @asyncio.coroutine
-    def vm_firewall_reload(self):
+    async def vm_firewall_reload(self):
         self.enforce(not self.arg)
 
         self.fire_event_for_permission()
 
         self.dest.fire_event('firewall-changed')
 
-    @asyncio.coroutine
-    def _load_backup_profile(self, profile_name, skip_passphrase=False):
+    async def _load_backup_profile(self, profile_name, skip_passphrase=False):
         """Load backup profile and return :py:class:`qubes.backup.Backup`
         instance
 
@@ -1452,7 +1399,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         profile_path = os.path.join(
             qubes.config.backup_profile_dir, profile_name + '.conf')
 
-        with open(profile_path) as profile_file:
+        with open(profile_path, encoding='utf-8') as profile_file:
             profile_data = yaml.safe_load(profile_file)
 
         try:
@@ -1491,7 +1438,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
                 raise qubes.exc.QubesException(
                     'Invalid backup profile - invalid passphrase_vm')
             try:
-                passphrase, _ = yield from passphrase_vm.run_service_for_stdio(
+                passphrase, _ = await passphrase_vm.run_service_for_stdio(
                     'qubes.BackupPassphrase+' + self.arg)
                 # make it foolproof against "echo passphrase" implementation
                 passphrase = passphrase.strip()
@@ -1536,8 +1483,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.backup.Execute', no_payload=True,
         scope='global', read=True, execute=True)
-    @asyncio.coroutine
-    def backup_execute(self):
+    async def backup_execute(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(self.arg)
         self.enforce('/' not in self.arg)
@@ -1553,7 +1499,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         if not hasattr(self.app, 'api_admin_running_backups'):
             self.app.api_admin_running_backups = {}
 
-        backup = yield from self._load_backup_profile(self.arg)
+        backup = await self._load_backup_profile(self.arg)
         backup.progress_callback = functools.partial(
             self._backup_progress_callback, self.arg)
 
@@ -1564,7 +1510,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
         backup_task = asyncio.ensure_future(backup.backup_do())
         self.app.api_admin_running_backups[self.arg] = backup_task
         try:
-            yield from backup_task
+            await backup_task
         except asyncio.CancelledError:
             raise qubes.exc.QubesException('Backup cancelled')
         finally:
@@ -1572,8 +1518,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.backup.Cancel', no_payload=True,
         scope='global', execute=True)
-    @asyncio.coroutine
-    def backup_cancel(self):
+    async def backup_cancel(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(self.arg)
         self.enforce('/' not in self.arg)
@@ -1590,8 +1535,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.backup.Info', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def backup_info(self):
+    async def backup_info(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(self.arg)
         self.enforce('/' not in self.arg)
@@ -1604,7 +1548,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
             raise qubes.api.PermissionDenied(
                 'Backup profile {} does not exist'.format(self.arg))
 
-        backup = yield from self._load_backup_profile(self.arg,
+        backup = await self._load_backup_profile(self.arg,
             skip_passphrase=True)
         return backup.get_backup_summary()
 
@@ -1655,8 +1599,7 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('admin.vm.Stats', no_payload=True,
         scope='global', read=True)
-    @asyncio.coroutine
-    def vm_stats(self):
+    async def vm_stats(self):
         self.enforce(not self.arg)
 
         # run until client connection is terminated
@@ -1678,15 +1621,14 @@ class QubesAdminAPI(qubes.api.AbstractQubesAPI):
             while True:
                 info_time, info = self._send_stats_single(info_time, info,
                     only_vm, stats_filters, id_to_name_map)
-                yield from asyncio.sleep(self.app.stats_interval)
+                await asyncio.sleep(self.app.stats_interval)
         except asyncio.CancelledError:
             # valid method to terminate this loop
             pass
 
     @qubes.api.method('admin.vm.CurrentState', no_payload=True,
         scope='local', read=True)
-    @asyncio.coroutine
-    def vm_current_state(self):
+    async def vm_current_state(self):
         self.enforce(not self.arg)
         self.fire_event_for_permission()
 

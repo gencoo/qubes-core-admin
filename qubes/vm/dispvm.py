@@ -20,7 +20,6 @@
 
 ''' A disposable vm implementation '''
 
-import asyncio
 import copy
 
 import qubes.vm.qubesvm
@@ -117,12 +116,25 @@ class DispVM(qubes.vm.qubesvm.QubesVM):
                     self.volume_config[name] = config.copy()
                     if 'vid' in self.volume_config[name]:
                         del self.volume_config[name]['vid']
-                # copy pool setting from base AppVM; root and private would be
-                # in the same pool anyway (because of snap_on_start),
-                # but not volatile, which could be surprising
-                elif 'pool' not in self.volume_config[name] \
-                        and 'pool' in config:
-                    self.volume_config[name]['pool'] = config['pool']
+                else:
+                    # if volume exists, use its live config, since some settings
+                    # can be changed and volume_config isn't updated
+                    config = template.volumes[name].config
+                    # copy pool setting from base AppVM; root and private would
+                    # be in the same pool anyway (because of snap_on_start),
+                    # but not volatile, which could be surprising
+                    if 'pool' not in self.volume_config[name] \
+                            and 'pool' in config:
+                        self.volume_config[name]['pool'] = config['pool']
+                    # copy rw setting from the base AppVM too
+                    if 'rw' in config:
+                        self.volume_config[name]['rw'] = config['rw']
+                    # copy ephemeral setting from the base AppVM too, but only
+                    # if non-default value is used
+                    if 'ephemeral' not in self.volume_config[name] \
+                            and 'ephemeral' in config:
+                        self.volume_config[name]['ephemeral'] = \
+                            config['ephemeral']
 
         super().__init__(app, xml, *args, **kwargs)
 
@@ -150,7 +162,7 @@ class DispVM(qubes.vm.qubesvm.QubesVM):
     @qubes.events.handler('property-pre-reset:template')
     def on_property_pre_reset_template(self, event, name, oldvalue=None):
         '''Forbid deleting template of VM
-        '''  # pylint: disable=unused-argument,no-self-use
+        '''  # pylint: disable=unused-argument
         raise qubes.exc.QubesValueError('Cannot unset template')
 
     @qubes.events.handler('property-pre-set:template')
@@ -170,21 +182,18 @@ class DispVM(qubes.vm.qubesvm.QubesVM):
         qubes.vm.appvm.template_changed_update_storage(self)
 
     @qubes.events.handler('domain-shutdown')
-    @asyncio.coroutine
-    def on_domain_shutdown(self, _event, **_kwargs):
-        yield from self._auto_cleanup()
+    async def on_domain_shutdown(self, _event, **_kwargs):  # pylint: disable=invalid-overridden-method
+        await self._auto_cleanup()
 
-    @asyncio.coroutine
-    def _auto_cleanup(self):
+    async def _auto_cleanup(self):
         '''Do auto cleanup if enabled'''
         if self.auto_cleanup and self in self.app.domains:
             del self.app.domains[self]
-            yield from self.remove_from_disk()
+            await self.remove_from_disk()
             self.app.save()
 
     @classmethod
-    @asyncio.coroutine
-    def from_appvm(cls, appvm, **kwargs):
+    async def from_appvm(cls, appvm, **kwargs):
         '''Create a new instance from given AppVM
 
         :param qubes.vm.appvm.AppVM appvm: template from which the VM should \
@@ -201,7 +210,7 @@ class DispVM(qubes.vm.qubesvm.QubesVM):
         This method modifies :file:`qubes.xml` file.
         The qube returned is not started.
         '''
-        if not appvm.template_for_dispvms:
+        if not getattr(appvm, 'template_for_dispvms', False):
             raise qubes.exc.QubesException(
                 'Refusing to create DispVM out of this AppVM, because '
                 'template_for_dispvms=False')
@@ -211,26 +220,24 @@ class DispVM(qubes.vm.qubesvm.QubesVM):
             template=appvm,
             auto_cleanup=True,
             **kwargs)
-        yield from dispvm.create_on_disk()
+        await dispvm.create_on_disk()
         app.save()
         return dispvm
 
-    @asyncio.coroutine
-    def cleanup(self):
+    async def cleanup(self):
         '''Clean up after the DispVM
 
         This stops the disposable qube and removes it from the store.
         This method modifies :file:`qubes.xml` file.
         '''
         try:
-            # pylint: disable=not-an-iterable
-            yield from self.kill()
+            await self.kill()
         except qubes.exc.QubesVMNotStartedError:
             pass
         # if auto_cleanup is set, this will be done automatically
         if not self.auto_cleanup:
             del self.app.domains[self]
-            yield from self.remove_from_disk()
+            await self.remove_from_disk()
             self.app.save()
 
     async def start(self, **kwargs):

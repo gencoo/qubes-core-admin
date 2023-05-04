@@ -32,8 +32,9 @@
 
 import asyncio
 import collections
+import contextlib
 import functools
-import logging
+import logging.handlers
 import os
 import pathlib
 import shlex
@@ -44,7 +45,6 @@ import tempfile
 import time
 import traceback
 import unittest
-import warnings
 from distutils import spawn
 
 import gc
@@ -62,6 +62,7 @@ import qubes.devices
 import qubes.events
 import qubes.exc
 import qubes.ext.pci
+import qubes.tests.never_awaited
 import qubes.vm.standalonevm
 import qubes.vm.templatevm
 
@@ -74,7 +75,7 @@ CLSVMPREFIX = 'test-cls-'
 if 'DEFAULT_LVM_POOL' in os.environ.keys():
     DEFAULT_LVM_POOL = os.environ['DEFAULT_LVM_POOL']
 else:
-    DEFAULT_LVM_POOL = 'qubes_dom0/pool00'
+    DEFAULT_LVM_POOL = 'qubes_dom0/vm-pool'
 
 POOL_CONF = {'name': 'test-lvm',
              'driver': 'lvm_thin',
@@ -168,6 +169,7 @@ class TestEmitter(qubes.events.Emitter):
 
         #: :py:class:`collections.Counter` instance
         self.fired_events = collections.Counter()
+        self.events_enabled = True
 
     def fire_event(self, event, **kwargs):
         effects = super(TestEmitter, self).fire_event(event, **kwargs)
@@ -181,9 +183,8 @@ class TestEmitter(qubes.events.Emitter):
         self.fired_events[(event, ev_kwargs)] += 1
         return effects
 
-    @asyncio.coroutine
-    def fire_event_async(self, event, pre_event=False, **kwargs):
-        effects = yield from super(TestEmitter, self).fire_event_async(
+    async def fire_event_async(self, event, pre_event=False, **kwargs):
+        effects = await super(TestEmitter, self).fire_event_async(
             event, pre_event=pre_event, **kwargs)
         ev_kwargs = frozenset(
             (key,
@@ -385,12 +386,47 @@ class substitute_entry_points(object):
         self._orig_iter_entry_points = None
 
 
+class _clear_ex_info(contextlib.ContextDecorator):
+    """Remove local variables reference from tracebacks to allow garbage
+    collector to clean all Qubes*() objects, otherwise file descriptors
+    held by them will leak"""
+    def __init__(self, result_callback=None):
+        self._result_callback = result_callback
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._result_callback:
+            self._result_callback(
+                not exc_type or isinstance(exc_type, unittest.SkipTest)
+            )
+        if exc_val is None:
+            return
+        ex = exc_val
+        while ex is not None:
+            if isinstance(ex, qubes.exc.QubesVMError):
+                ex.vm = None
+            traceback.clear_frames(ex.__traceback__)
+            ex = ex.__context__
+
+
 class QubesTestCase(unittest.TestCase):
     """Base class for Qubes unit tests.
     """
 
-    def __init__(self, *args, **kwargs):
-        super(QubesTestCase, self).__init__(*args, **kwargs)
+    _callSetUp      = never_awaited.detect()(unittest.TestCase._callSetUp)
+    _callTestMethod = never_awaited.detect()(unittest.TestCase._callTestMethod)
+    _callTearDown   = never_awaited.detect()(unittest.TestCase._callTearDown)
+    _callCleanup    = never_awaited.detect()(unittest.TestCase._callCleanup)
+
+    def __init__(self, methodName='runTest'):
+        try:
+            test_method = getattr(self, methodName)
+            setattr(self, methodName, _clear_ex_info(self.set_result)(test_method))
+        except AttributeError:
+            pass
+        super(QubesTestCase, self).__init__(methodName)
         self.longMessage = True
         self.log = logging.getLogger('{}.{}.{}'.format(
             self.__class__.__module__,
@@ -399,12 +435,21 @@ class QubesTestCase(unittest.TestCase):
         self.addTypeEqualityFunc(qubes.devices.DeviceManager,
                                  self.assertDevicesEqual)
 
+        # decorate methods here, to catch also any overriden methods in subclasses
+        self.setUp = _clear_ex_info()(self.setUp)
+        self.tearDown = _clear_ex_info()(self.tearDown)
+
         self.loop = None
+
+        self._success = True
 
         global libvirt_event_impl
 
         if in_dom0 and not libvirt_event_impl:
             libvirt_event_impl = libvirtaio.virEventRegisterAsyncIOImpl()
+
+    def set_result(self, success):
+        self._success = success
 
     def __str__(self):
         return '{}/{}/{}'.format(
@@ -418,25 +463,6 @@ class QubesTestCase(unittest.TestCase):
 
         self.loop = asyncio.get_event_loop()
         self.addCleanup(self.cleanup_loop)
-        self.addCleanup(self.cleanup_traceback)
-
-    def cleanup_traceback(self):
-        """Remove local variables reference from tracebacks to allow garbage
-        collector to clean all Qubes*() objects, otherwise file descriptors
-        held by them will leak"""
-        exc_infos = [e for test_case, e in self._outcome.errors
-                     if test_case is self]
-        if self._outcome.expectedFailure:
-            exc_infos.append(self._outcome.expectedFailure)
-        for exc_info in exc_infos:
-            if exc_info is None:
-                continue
-            ex = exc_info[1]
-            while ex is not None:
-                if isinstance(ex, qubes.exc.QubesVMError):
-                    ex.vm = None
-                traceback.clear_frames(ex.__traceback__)
-                ex = ex.__context__
 
     def cleanup_gc(self):
         gc.collect()
@@ -477,7 +503,7 @@ class QubesTestCase(unittest.TestCase):
         if libvirt_event_impl is not None:
             try:
                 self.loop.run_until_complete(asyncio.wait_for(
-                    libvirt_event_impl.drain(), timeout=4))
+                    libvirt_event_impl.drain(), timeout=30))
             except asyncio.TimeoutError:
                 raise AssertionError('libvirt event impl drain timeout')
 
@@ -500,6 +526,11 @@ class QubesTestCase(unittest.TestCase):
                == int(self.loop._ssock is not None)
 
         del self.loop
+
+    def success(self):
+        """Check if test was successful during tearDown """
+
+        return self._success
 
     def assertNotRaises(self, excClass, callableObj=None, *args, **kwargs):
         """Fail if an exception of class excClass is raised
@@ -682,12 +713,9 @@ class SystemTestCase(QubesTestCase):
     defined in this file.
     Every VM created by test, must use :py:meth:`SystemTestCase.make_vm_name`
     for VM name.
-    By default self.app represents empty collection, if anything is needed
-    there from the real collection it can be imported from self.host_app in
-    :py:meth:`SystemTestCase.setUp`. But *can not be modified* in any way -
-    this include both changing attributes in
-    :py:attr:`SystemTestCase.host_app` and modifying files of such imported
-    VM. If test need to make some modification, it must clone the VM first.
+    By default, self.app represents copied host collection. Any preexisting
+    domains should not be modified in any way (including started/stopped).
+    If test need to make some modification, it must clone the VM first.
 
     If some group of tests needs class-wide initialization, first of all the
     author should consider if it is really needed. But if so, setUpClass can
@@ -697,6 +725,12 @@ class SystemTestCase(QubesTestCase):
     Such (group of) test need to take care about
     :py:meth:`TestCase.tearDownClass` implementation itself.
     """
+
+    def __init__(self, methodName='runTest'):
+        if os.environ.get('QUBES_TEST_WAIT_ON_FAIL', None) == '1':
+            setattr(self, methodName,
+                lambda: wait_on_fail(getattr(self.__class__, methodName))(self))
+        super().__init__(methodName=methodName)
 
     # noinspection PyAttributeOutsideInit
     def setUp(self):
@@ -767,7 +801,7 @@ class SystemTestCase(QubesTestCase):
         del conn
 
         self.loop.run_until_complete(asyncio.wait([
-            server.wait_closed() for server in self.qubesd]))
+            self.loop.create_task(server.wait_closed()) for server in self.qubesd]))
         del self.qubesd
 
         # remove all references to any complex qubes objects, to release
@@ -810,6 +844,33 @@ class SystemTestCase(QubesTestCase):
 
         self.app.default_netvm = str(default_netvm)
 
+    async def whonix_gw_setup_async(self, vm):
+        """Complete whonix-gw initial setup, to enable networking there.
+        The should not be running yet, but will be started in the process.
+        """
+        vm.provides_network = True
+        await vm.start()
+        try:
+            await vm.run_for_stdio(
+                'systemctl is-system-running --wait', user='root')
+        except subprocess.CalledProcessError:
+            # don't fail the whole test if some service fails to start,
+            # we have separate tests for detecting this
+            pass
+        await vm.run_for_stdio(
+            'cat > {0}'.format('/usr/local/etc/torrc.d/40_tor_control_panel.conf'),
+            user='root', input=b'DisableNetwork 0\n')
+        await vm.run_for_stdio(
+            'systemctl restart tor@default.service', user='root')
+        try:
+            await vm.run_for_stdio(
+                'pkill -f setup-wizard-dist', user='root')
+        except subprocess.CalledProcessError:
+            pass
+        await vm.run_for_stdio(
+            'systemcheck --cli')
+
+
     def _find_pool(self, volume_group, thin_pool):
         """ Returns the pool matching the specified ``volume_group`` &
             ``thin_pool``, or None.
@@ -824,7 +885,7 @@ class SystemTestCase(QubesTestCase):
 
     def init_lvm_pool(self):
         volume_group, thin_pool = DEFAULT_LVM_POOL.split('/', 1)
-        path = "/dev/mapper/{!s}-{!s}".format(volume_group, thin_pool)
+        path = "/dev/mapper/{!s}-{!s}".format(volume_group, thin_pool.replace('-', '--'))
         if not os.path.exists(path):
             self.skipTest('LVM thin pool {!r} does not exist'.
                           format(DEFAULT_LVM_POOL))
@@ -939,19 +1000,22 @@ class SystemTestCase(QubesTestCase):
             try:
                 # XXX .is_running() may throw libvirtError if undefined
                 if vm.is_running():
-                    self.loop.run_until_complete(vm._kill_locked())
+                    self.loop.run_until_complete(vm.kill())
             except:  # pylint: disable=bare-except
                 pass
         # break dependencies
         for vm in vms:
             vm.default_dispvm = None
             vm.netvm = None
+            vm.management_dispvm = None
         # take app instance from any VM to be removed
         app = vms[0].app
         if app.default_dispvm in vms:
             app.default_dispvm = None
         if app.default_netvm in vms:
             app.default_netvm = None
+        if app.management_dispvm in vms:
+            app.management_dispvm = None
         del app
         # then remove in reverse topological order (wrt template), using naive
         # algorithm
@@ -1052,8 +1116,7 @@ class SystemTestCase(QubesTestCase):
         return _QrexecPolicyContext(service, source, destination,
                                     allow=allow, action=action)
 
-    @asyncio.coroutine
-    def wait_for_window_hide_coro(self, title, winid, timeout=30):
+    async def wait_for_window_hide_coro(self, title, winid, timeout=30):
         """
         Wait for window do disappear
         :param winid: window id
@@ -1067,11 +1130,10 @@ class SystemTestCase(QubesTestCase):
             if wait_count > timeout * 10:
                 self.fail("Timeout while waiting for {}({}) window to "
                           "disappear".format(title, winid))
-            yield from asyncio.sleep(0.1)
+            await asyncio.sleep(0.1)
 
-    @asyncio.coroutine
-    def wait_for_window_coro(self, title, search_class=False, timeout=30,
-                             show=True):
+    async def wait_for_window_coro(self, title, search_class=False,
+                                   include_tray=True, timeout=30, show=True):
         """
         Wait for a window with a given title. Depending on show parameter,
         it will wait for either window to show or to disappear.
@@ -1081,6 +1143,7 @@ class SystemTestCase(QubesTestCase):
         :param show: if True - wait for the window to be visible,
             otherwise - to not be visible
         :param search_class: search based on window class instead of title
+        :param include_tray: include windows docked in tray
         :return: window id of found window, if show=True
         """
 
@@ -1089,6 +1152,8 @@ class SystemTestCase(QubesTestCase):
             xdotool_search.append('--class')
         else:
             xdotool_search.append('--name')
+        if not include_tray:
+            xdotool_search.extend(('--maxdepth', '2'))
         if show:
             xdotool_search.append('--sync')
         if not show:
@@ -1098,17 +1163,17 @@ class SystemTestCase(QubesTestCase):
             except subprocess.CalledProcessError:
                 # already gone
                 return
-            yield from self.wait_for_window_hide_coro(winid, title,
+            await self.wait_for_window_hide_coro(winid, title,
                                                       timeout=timeout)
             return
 
         winid = None
         while not winid:
-            p = yield from asyncio.create_subprocess_exec(
+            p = await asyncio.create_subprocess_exec(
                 *xdotool_search, title,
                 stderr=subprocess.DEVNULL, stdout=subprocess.PIPE)
             try:
-                (winid, _) = yield from asyncio.wait_for(
+                (winid, _) = await asyncio.wait_for(
                     p.communicate(), timeout)
                 # don't check exit code, getting winid on stdout is enough
                 # indicator of success; specifically ignore xdotool failing
@@ -1129,6 +1194,7 @@ class SystemTestCase(QubesTestCase):
         :param show: if True - wait for the window to be visible,
             otherwise - to not be visible
         :param search_class: search based on window class instead of title
+        :param include_tray: include windows docked in tray
         :return: window id of found window, if show=True
         """
         return self.loop.run_until_complete(
@@ -1273,23 +1339,28 @@ class SystemTestCase(QubesTestCase):
             'cat > {0}; chmod {1:o} {0}'.format(shlex.quote(filename), mode),
             user='root', input=content.encode('utf-8')))
 
-    @asyncio.coroutine
-    def wait_for_session(self, vm):
+    async def wait_for_session(self, vm):
         timeout = vm.qrexec_timeout
         if getattr(vm, 'template', None) and 'whonix-ws' in vm.template.name:
             # first boot of whonix-ws takes more time because of /home
             # initialization, including Tor Browser copying
             timeout = 120
-        yield from asyncio.wait_for(
-            vm.run_service_for_stdio(
-                'qubes.WaitForSession', input=vm.default_user.encode()),
-            timeout=timeout)
+        try:
+            await asyncio.wait_for(
+                vm.run_service_for_stdio(
+                    'qubes.WaitForSession', input=vm.default_user.encode()),
+                timeout=timeout)
+        except asyncio.TimeoutError:
+            # collect some more info
+            stdout, _ = await vm.run_for_stdio('cat .xsession-errors')
+            self.log.error("VM {} xsession-errors on timeout: {}".format(
+                           vm.name, stdout.decode()))
+            raise
 
-    @asyncio.coroutine
-    def start_vm(self, vm):
+    async def start_vm(self, vm):
         """Start a VM and wait for it to be fully up"""
-        yield from vm.start()
-        yield from self.wait_for_session(vm)
+        await vm.start()
+        await self.wait_for_session(vm)
 
 
 _templates = None
@@ -1399,32 +1470,34 @@ def load_tests(loader, tests, pattern):  # pylint: disable=unused-argument
     tests = unittest.TestSuite()
 
     for modname in (
-            # unit tests
-            'qubes.tests.events',
-            'qubes.tests.devices',
-            'qubes.tests.devices_block',
-            'qubes.tests.firewall',
-            'qubes.tests.init',
-            'qubes.tests.vm.init',
-            'qubes.tests.storage',
-            'qubes.tests.storage_file',
-            'qubes.tests.storage_reflink',
-            'qubes.tests.storage_lvm',
-            'qubes.tests.storage_callback',
-            'qubes.tests.storage_kernels',
-            'qubes.tests.ext',
-            'qubes.tests.vm.qubesvm',
-            'qubes.tests.vm.mix.net',
-            'qubes.tests.vm.adminvm',
-            'qubes.tests.vm.appvm',
-            'qubes.tests.vm.dispvm',
-            'qubes.tests.app',
-            'qubes.tests.tarwriter',
-            'qubes.tests.api',
-            'qubes.tests.api_admin',
-            'qubes.tests.api_misc',
-            'qubes.tests.api_internal',
-            'qubes.tests.rpc_import',
+        # unit tests
+        "qubes.tests.selftest",
+        "qubes.tests.events",
+        "qubes.tests.devices",
+        "qubes.tests.devices_block",
+        "qubes.tests.firewall",
+        "qubes.tests.init",
+        "qubes.tests.vm.init",
+        "qubes.tests.storage",
+        "qubes.tests.storage_file",
+        "qubes.tests.storage_reflink",
+        "qubes.tests.storage_lvm",
+        "qubes.tests.storage_callback",
+        "qubes.tests.storage_kernels",
+        "qubes.tests.storage_zfs",
+        "qubes.tests.ext",
+        "qubes.tests.vm.qubesvm",
+        "qubes.tests.vm.mix.net",
+        "qubes.tests.vm.adminvm",
+        "qubes.tests.vm.appvm",
+        "qubes.tests.vm.dispvm",
+        "qubes.tests.app",
+        "qubes.tests.tarwriter",
+        "qubes.tests.api",
+        "qubes.tests.api_admin",
+        "qubes.tests.api_misc",
+        "qubes.tests.api_internal",
+        "qubes.tests.rpc_import",
     ):
         tests.addTests(loader.loadTestsFromName(modname))
 

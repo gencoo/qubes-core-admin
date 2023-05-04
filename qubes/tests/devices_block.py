@@ -59,7 +59,6 @@ domain_xml_template = '''
       <driver name='phy'/>
       <source dev='/var/lib/qubes/vm-templates/fedora-25/root.img:/var/lib/qubes/vm-templates/fedora-25/root-cow.img'/>
       <backingStore/>
-      <script path='block-snapshot'/>
       <target dev='xvda' bus='xen'/>
       <readonly/>
     </disk>
@@ -121,6 +120,11 @@ class TestVM(object):
         self.name = name
         self.untrusted_qdb = TestQubesDB(qdb)
         self.libvirt_domain = mock.Mock()
+        self.features = mock.Mock()
+        self.features.check_with_template.side_effect = (
+                lambda name, default:
+                    '4.2' if name == 'qubes-agent-version'
+                    else None)
         self.is_running = lambda: running
         self.log = mock.Mock()
         self.app = TestApp()
@@ -368,8 +372,9 @@ class TC_00_Block(qubes.tests.QubesTestCase):
             '<disk type="block" device="disk">\n'
             '    <driver name="phy" />\n'
             '    <source dev="/dev/sda" />\n'
-            '        <target dev="xvdi" />\n'
+            '    <target dev="xvdi" />\n'
             '    <backenddomain name="sys-usb" />\n'
+            '    <script path="/etc/xen/scripts/qubes-block" />\n'
             '</disk>')
         vm.libvirt_domain.attachDevice.assert_called_once_with(device_xml)
 
@@ -388,8 +393,9 @@ class TC_00_Block(qubes.tests.QubesTestCase):
             '<disk type="block" device="disk">\n'
             '    <driver name="phy" />\n'
             '    <source dev="/dev/sda" />\n'
-            '        <target dev="xvdj" />\n'
+            '    <target dev="xvdj" />\n'
             '    <backenddomain name="sys-usb" />\n'
+            '    <script path="/etc/xen/scripts/qubes-block" />\n'
             '</disk>')
         vm.libvirt_domain.attachDevice.assert_called_once_with(device_xml)
 
@@ -408,9 +414,10 @@ class TC_00_Block(qubes.tests.QubesTestCase):
             '<disk type="block" device="disk">\n'
             '    <driver name="phy" />\n'
             '    <source dev="/dev/sda" />\n'
-            '        <target dev="xvdi" />\n'
-            '        <readonly />\n'
+            '    <target dev="xvdi" />\n'
+            '    <readonly />\n'
             '    <backenddomain name="sys-usb" />\n'
+            '    <script path="/etc/xen/scripts/qubes-block" />\n'
             '</disk>')
         vm.libvirt_domain.attachDevice.assert_called_once_with(device_xml)
 
@@ -483,9 +490,10 @@ class TC_00_Block(qubes.tests.QubesTestCase):
             '<disk type="block" device="disk">\n'
             '    <driver name="phy" />\n'
             '    <source dev="/dev/sda" />\n'
-            '        <target dev="xvdi" />\n'
-            '        <readonly />\n'
+            '    <target dev="xvdi" />\n'
+            '    <readonly />\n'
             '    <backenddomain name="sys-usb" />\n'
+            '    <script path="/etc/xen/scripts/qubes-block" />\n'
             '</disk>')
         vm.libvirt_domain.attachDevice.assert_called_once_with(device_xml)
 
@@ -503,9 +511,10 @@ class TC_00_Block(qubes.tests.QubesTestCase):
             '<disk type="block" device="cdrom">\n'
             '    <driver name="phy" />\n'
             '    <source dev="/dev/sda" />\n'
-            '        <target dev="xvdi" />\n'
-            '        <readonly />\n'
+            '    <target dev="xvdi" />\n'
+            '    <readonly />\n'
             '    <backenddomain name="sys-usb" />\n'
+            '    <script path="/etc/xen/scripts/qubes-block" />\n'
             '</disk>')
         vm.libvirt_domain.attachDevice.assert_called_once_with(device_xml)
 
@@ -523,9 +532,10 @@ class TC_00_Block(qubes.tests.QubesTestCase):
             '<disk type="block" device="cdrom">\n'
             '    <driver name="phy" />\n'
             '    <source dev="/dev/sda" />\n'
-            '        <target dev="xvdd" />\n'
-            '        <readonly />\n'
+            '    <target dev="xvdd" />\n'
+            '    <readonly />\n'
             '    <backenddomain name="sys-usb" />\n'
+            '    <script path="/etc/xen/scripts/qubes-block" />\n'
             '</disk>')
         vm.libvirt_domain.attachDevice.assert_called_once_with(device_xml)
 
@@ -540,9 +550,10 @@ class TC_00_Block(qubes.tests.QubesTestCase):
             '<disk type="block" device="disk">\n'
             '    <driver name="phy" />\n'
             '    <source dev="/dev/sda" />\n'
-            '        <target dev="xvdi" />\n'
-            '        <readonly />\n'
+            '    <target dev="xvdi" />\n'
+            '    <readonly />\n'
             '    <backenddomain name="sys-usb" />\n'
+            '    <script path="/etc/xen/scripts/qubes-block" />\n'
             '</disk>')
         vm = TestVM({}, domain_xml=domain_xml_template.format(device_xml))
         vm.app.domains['test-vm'] = vm
@@ -562,8 +573,8 @@ class TC_00_Block(qubes.tests.QubesTestCase):
             '<disk type="block" device="disk">\n'
             '    <driver name="phy" />\n'
             '    <source dev="/dev/sda" />\n'
-            '        <target dev="xvdi" />\n'
-            '        <readonly />\n\n'
+            '    <target dev="xvdi" />\n'
+            '    <readonly />\n\n'
             '    <backenddomain name="sys-usb" />\n'
             '</disk>')
         vm = TestVM({}, domain_xml=domain_xml_template.format(''))

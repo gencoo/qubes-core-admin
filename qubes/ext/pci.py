@@ -72,7 +72,7 @@ def pcidev_class(dev_xmldesc):
     sysfs_path = dev_xmldesc.findtext('path')
     assert sysfs_path
     try:
-        with open(sysfs_path + '/class') as f_class:
+        with open(sysfs_path + '/class', encoding='ascii') as f_class:
             class_id = f_class.read().strip()
     except OSError:
         return "Unknown"
@@ -129,10 +129,11 @@ def _device_desc(hostdev_xml):
 class PCIDevice(qubes.devices.DeviceInfo):
     # pylint: disable=too-few-public-methods
     regex = re.compile(
-        r'^(?P<bus>[0-9a-f]+)_(?P<device>[0-9a-f]+)\.(?P<function>[0-9a-f]+)$')
+        r'\A(?P<bus>[0-9a-f]+)_(?P<device>[0-9a-f]+)\.'
+        r'(?P<function>[0-9a-f]+)\Z')
     _libvirt_regex = re.compile(
-        r'^pci_0000_(?P<bus>[0-9a-f]+)_(?P<device>[0-9a-f]+)_'
-        r'(?P<function>[0-9a-f]+)$')
+        r'\Apci_0000_(?P<bus>[0-9a-f]+)_(?P<device>[0-9a-f]+)_'
+        r'(?P<function>[0-9a-f]+)\Z')
 
     def __init__(self, backend_domain, ident, libvirt_name=None):
         if libvirt_name:
@@ -177,7 +178,7 @@ class PCIDeviceExtension(qubes.ext.Extension):
 
     @qubes.ext.handler('device-list:pci')
     def on_device_list_pci(self, vm, event):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         # only dom0 expose PCI devices
         if vm.qid != 0:
             return
@@ -192,13 +193,13 @@ class PCIDeviceExtension(qubes.ext.Extension):
 
     @qubes.ext.handler('device-get:pci')
     def on_device_get_pci(self, vm, event, ident):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         if not vm.app.vmm.offline_mode:
             yield _cache_get(vm, ident)
 
     @qubes.ext.handler('device-list-attached:pci')
     def on_device_list_attached(self, vm, event, **kwargs):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         if not vm.is_running() or isinstance(vm, qubes.vm.adminvm.AdminVM):
             return
         xml_desc = lxml.etree.fromstring(vm.libvirt_domain.XMLDesc())
@@ -226,6 +227,9 @@ class PCIDeviceExtension(qubes.ext.Extension):
             raise qubes.exc.QubesException(
                 'Invalid PCI device: {}'.format(device.ident))
 
+        if isinstance(vm, qubes.vm.adminvm.AdminVM):
+            raise qubes.exc.QubesException("Can't attach PCI device to dom0")
+
         if vm.virt_mode == 'pvh':
             raise qubes.exc.QubesException(
                 "Can't attach PCI device to VM in pvh mode")
@@ -246,7 +250,7 @@ class PCIDeviceExtension(qubes.ext.Extension):
 
     @qubes.ext.handler('device-pre-detach:pci')
     def on_device_pre_detached_pci(self, vm, event, device):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         if not vm.is_running():
             return
 
@@ -255,9 +259,9 @@ class PCIDeviceExtension(qubes.ext.Extension):
         # qubes.DetachPciDevice, which unbinds driver, not to oops the kernel
 
         device = _cache_get(device.backend_domain, device.ident)
-        p = subprocess.Popen(['xl', 'pci-list', str(vm.xid)],
-                stdout=subprocess.PIPE)
-        result = p.communicate()[0].decode()
+        with subprocess.Popen(['xl', 'pci-list', str(vm.xid)],
+                stdout=subprocess.PIPE) as p:
+            result = p.communicate()[0].decode()
         m = re.search(r'^(\d+.\d+)\s+0000:{}$'.format(device.ident.replace(
             '_', ':')),
             result,
@@ -315,7 +319,7 @@ class PCIDeviceExtension(qubes.ext.Extension):
 
     @qubes.ext.handler('qubes-close', system=True)
     def on_app_close(self, app, event):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         _cache_get.cache_clear()
 
 

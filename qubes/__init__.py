@@ -245,8 +245,11 @@ class property:  # pylint: disable=redefined-builtin,invalid-name
             return
 
         try:
-            oldvalue = getattr(instance, self.__name__)
-            has_oldvalue = True
+            if instance.events_enabled:
+                oldvalue = getattr(instance, self.__name__)
+                has_oldvalue = True
+            else:
+                has_oldvalue = False
         except AttributeError:
             has_oldvalue = False
 
@@ -409,11 +412,12 @@ class property:  # pylint: disable=redefined-builtin,invalid-name
         This is used to effectively disable property in classes which inherit
         unwanted property. When someone attempts to load such a property, it
 
-        :throws AttributeError: always
+        :throws qubes.exc.QubesPropertyValueError: always
         ''' # pylint: disable=bad-staticmethod-argument,unused-argument
 
-        raise AttributeError(
-            'setting {} property on {} instance is forbidden'.format(
+        raise qubes.exc.QubesPropertyValueError(
+            self, self.property_get_def(prop), value,
+            'property {!r} on {} instance cannot be set'.format(
                 prop.__name__, self.__class__.__name__))
 
 
@@ -572,13 +576,12 @@ class PropertyHolder(qubes.events.Emitter):
         memo = cls._property_dict
 
         if load_stage not in memo:
-            props = dict()
+            props = {}
             if load_stage is None:
                 for class_ in cls.__mro__:
-                    for name in class_.__dict__:
+                    for name, prop in class_.__dict__.items():
                         # don't overwrite props with those from base classes
                         if name not in props:
-                            prop = class_.__dict__[name]
                             if isinstance(prop, property):
                                 assert name == prop.__name__
                                 props[name] = prop

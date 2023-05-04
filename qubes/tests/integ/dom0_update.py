@@ -20,6 +20,7 @@
 
 import asyncio
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -50,7 +51,7 @@ class TC_00_Dom0UpgradeMixin(object):
                              stderr=open(os.devnull, 'w'))
         p.stdin.write('''
 Key-Type: RSA
-Key-Length: 1024
+Key-Length: 4096
 Key-Usage: sign
 Name-Real: Qubes test
 Expire-Date: 0
@@ -180,13 +181,13 @@ Test package
                 input=f_pkg.read()))
         try:
             self.loop.run_until_complete(
-                self.updatevm.run_for_stdio('cd /tmp/repo; createrepo .'))
+                self.updatevm.run_for_stdio('cd /tmp/repo; createrepo_c .'))
         except subprocess.CalledProcessError as e:
             if e.returncode == 127:
-                self.skipTest('createrepo not installed in template {}'.format(
+                self.skipTest('createrepo_c not installed in template {}'.format(
                     self.template))
             else:
-                self.skipTest('createrepo failed with code {}, '
+                self.skipTest('createrepo_c failed with code {}, '
                     'cannot perform the test'.format(e.returncode))
         self.start_repo()
 
@@ -237,6 +238,27 @@ Test package
         self.assertFalse(
             self.app.domains[0].features.get('updates-available', False),
             "'updates pending' flag not cleared")
+
+    def test_001_update_check(self):
+        """ Check if dom0 updates check works
+        """
+        filename = self.create_pkg(self.tmpdir, self.pkg_name, '1.0')
+        subprocess.check_call(['rpm', '-i', filename])
+        filename = self.create_pkg(self.tmpdir, self.pkg_name, '2.0')
+        self.send_pkg(filename)
+        # check if disabling updates check is respected
+        self.app.domains[0].features['service.qubes-update-check'] = False
+        proc = self.loop.run_until_complete(asyncio.create_subprocess_exec(
+            '/etc/cron.daily/qubes-dom0-updates.cron'))
+        self.loop.run_until_complete(proc.communicate())
+        self.assertFalse(self.app.domains[0].features.get('updates-available', False))
+
+        # re-enable updates check and try again
+        del self.app.domains[0].features['service.qubes-update-check']
+        proc = self.loop.run_until_complete(asyncio.create_subprocess_exec(
+            '/etc/cron.daily/qubes-dom0-updates.cron'))
+        self.loop.run_until_complete(proc.communicate())
+        self.assertTrue(self.app.domains[0].features.get('updates-available', False))
 
     def test_005_update_flag_clear(self):
         """Check if 'updates pending' flag is cleared"""
@@ -383,10 +405,146 @@ Test package
         self.assertEqual(retcode, 1,
                          'UNSIGNED package {}-1.0 installed'.format(self.pkg_name))
 
+class TC_10_QvmTemplateMixin(object):
+    """
+    Tests for downloading dom0 updates using VMs based on different templates
+    """
+    template_name = os.environ.get(
+        'QUBES_INSTALL_TEST_TEMPLATE', 'debian-11-minimal')
+    common_args = []
+
+    def setUp(self):
+        super().setUp()
+        if self.template_name in self.app.domains:
+            self.skipTest(
+                'Template \'{}\' is already installed, '
+                'choose a different one with QUBES_INSTALL_TEST_TEMPLATE variable')
+        if self.template.startswith('whonix-ws'):
+            self.skipTest('Test not supported for this template')
+        self.tmpdir = tempfile.mkdtemp()
+        self.init_default_template(self.template)
+        self.updatevm = self.app.add_new_vm(
+            qubes.vm.appvm.AppVM,
+            name=self.make_vm_name("updatevm"),
+            label='red'
+        )
+        self.loop.run_until_complete(self.updatevm.create_on_disk())
+        self.app.updatevm = self.updatevm
+        self.app.save()
+        if self.template.startswith('whonix-gw'):
+            self.loop.run_until_complete(
+                self.whonix_gw_setup_async(self.updatevm))
+        else:
+            self.loop.run_until_complete(self.updatevm.start())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+        if self.template_name in self.app.domains:
+            tpl = self.app.domains[self.template_name]
+            try:
+                self.loop.run_until_complete(tpl.kill())
+            except qubes.exc.QubesVMNotStartedError:
+                pass
+            except:
+                self.app.log.exception('Failed to kill %s template', tpl.name)
+                # but still try to continue
+            del self.app.domains[tpl]
+            self.loop.run_until_complete(tpl.remove_from_disk())
+        super().tearDown()
+
+    def run_qvm_template(self, *args):
+        proc = self.loop.run_until_complete(asyncio.create_subprocess_exec(
+            *args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE))
+        stdout, stderr = self.loop.run_until_complete(proc.communicate())
+        return proc.returncode, stdout, stderr
+
+    def test_000_template_list(self):
+        retcode, stdout, stderr = self.run_qvm_template('qvm-template',
+                *self.common_args,
+                '--repoid=qubes-templates-itl-testing',
+                'list', '--machine-readable', '--available', self.template_name)
+        if retcode != 0:
+            self.fail("qvm-template failed: " + stderr.decode())
+        self.assertIn('|' + self.template_name + '|', stdout.decode())
+
+    def test_010_template_install(self):
+        retcode, stdout, stderr = self.run_qvm_template('qvm-template',
+                *self.common_args,
+                '--disablerepo=*', '--enablerepo=qubes-templates-itl-testing',
+                'install', self.template_name)
+        if retcode != 0:
+            self.fail("qvm-template failed: " + stderr.decode())
+        self.assertIn(self.template_name, self.app.domains)
+        # just a basic sanity check - tests whether the template starts
+        # and have qrexec working
+        tpl = self.app.domains[self.template_name]
+        self.loop.run_until_complete(tpl.start())
+        got_hostname, _ = self.loop.run_until_complete(tpl.run_for_stdio('uname -n'))
+        self.assertEqual(got_hostname.decode().strip(), self.template_name)
+
+
+class TC_11_QvmTemplateMgmtVMMixin(TC_10_QvmTemplateMixin):
+    common_args = TC_10_QvmTemplateMixin.common_args + ['--updatevm=']
+    def run_qvm_template(self, *args):
+        try:
+            stdout, stderr = self.loop.run_until_complete(
+                self.updatevm.run_for_stdio(shlex.join(args)))
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 127:
+                self.skipTest('Package qubes-core-admin-client '
+                              '(including qvm-template) not installed')
+            return e.returncode, e.stdout, e.stderr
+        return 0, stdout, stderr
+
+    def setUp(self):
+        super(TC_11_QvmTemplateMgmtVMMixin, self).setUp()
+        self.policy_path = '/etc/qubes/policy.d/50-test-inst.policy'
+        if os.path.exists(self.policy_path):
+            # do not automatically remove any policy file that wasn't _for sure_
+            # created by the very same test
+            self.fail(
+                '{} already exists, cleanup after previous test failed?'.format(
+                    self.policy_path))
+        with open(self.policy_path, 'w') as policy:
+            policy.write('''### Qrexec policy used by tests in {file}
+admin.vm.Create.TemplateVM * {vm} @adminvm allow target=dom0
+admin.vm.feature.Get * {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.feature.Set * {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.property.Get * {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.property.Set * {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.property.Reset * {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.CurrentState * {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.Start * {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.Shutdown * {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.Kill * {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.volume.List + {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.volume.Info +root {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.volume.ImportWithSize +root {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.volume.Resize +root {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.volume.Clear +private {vm} @tag:created-by-{vm} allow target=dom0
+admin.vm.List + {vm} @adminvm allow
+admin.vm.List + {vm} @tag:created-by-{vm} allow target=dom0
+admin.Events * {vm} @adminvm allow target=dom0
+admin.Events * {vm} @tag:created-by-{vm} allow target=dom0
+qubes.PostInstall + {vm} @tag:created-by-{vm} allow
+'''.format(file=__file__, vm=self.updatevm.name))
+
+    def tearDown(self):
+        os.unlink(self.policy_path)
+        super(TC_11_QvmTemplateMgmtVMMixin, self).tearDown()
+
 
 def create_testcases_for_templates():
-    return qubes.tests.create_testcases_for_templates('TC_00_Dom0Upgrade',
+    yield from qubes.tests.create_testcases_for_templates('TC_00_Dom0Upgrade',
         TC_00_Dom0UpgradeMixin, qubes.tests.SystemTestCase,
+        module=sys.modules[__name__])
+    yield from qubes.tests.create_testcases_for_templates('TC_10_QvmTemplate',
+        TC_10_QvmTemplateMixin, qubes.tests.SystemTestCase,
+        module=sys.modules[__name__])
+    yield from qubes.tests.create_testcases_for_templates('TC_11_QvmTemplateMgmtVM',
+        TC_11_QvmTemplateMgmtVMMixin, qubes.tests.SystemTestCase,
         module=sys.modules[__name__])
 
 def load_tests(loader, tests, pattern):

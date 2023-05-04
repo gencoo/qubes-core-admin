@@ -22,15 +22,20 @@ import os
 import qubes.ext.core_features
 import qubes.ext.services
 import qubes.ext.windows
+import qubes.ext.supported_features
+import qubes.ext.vm_config
 import qubes.tests
+import qubes.vm.qubesvm
 
 from unittest import mock
 
 class TC_00_CoreFeatures(qubes.tests.QubesTestCase):
+    maxDiff = None
     def setUp(self):
         super().setUp()
         self.ext = qubes.ext.core_features.CoreFeatures()
         self.vm = mock.MagicMock()
+        self.async_vm = mock.AsyncMock()
         self.features = {}
         self.vm.configure_mock(**{
             'features.get.side_effect': self.features.get,
@@ -39,6 +44,7 @@ class TC_00_CoreFeatures(qubes.tests.QubesTestCase):
             'features.__contains__.side_effect': self.features.__contains__,
             'features.__setitem__.side_effect': self.features.__setitem__,
             'features.__delitem__.side_effect': self.features.__delitem__,
+            'fire_event_async': self.async_vm,
             })
 
     def test_010_notify_tools(self):
@@ -60,7 +66,6 @@ class TC_00_CoreFeatures(qubes.tests.QubesTestCase):
             ('features.__setitem__', ('vmexec', True), {}),
             ('features.get', ('qrexec', False), {}),
             ('fire_event_async', ('template-postinstall',), {}),
-            ('fire_event_async().__iter__', (), {}),
         ])
 
     def test_011_notify_tools_uninstall(self):
@@ -113,7 +118,6 @@ class TC_00_CoreFeatures(qubes.tests.QubesTestCase):
             ('features.__setitem__', ('gui', True), {}),
             ('features.get', ('qrexec', False), {}),
             ('fire_event_async', ('template-postinstall',), {}),
-            ('fire_event_async().__iter__', (), {}),
         ])
 
     def test_015_notify_tools_invalid_value_qrexec(self):
@@ -149,7 +153,6 @@ class TC_00_CoreFeatures(qubes.tests.QubesTestCase):
             ('features.__setitem__', ('qrexec', True), {}),
             ('features.get', ('qrexec', False), {}),
             ('fire_event_async', ('template-postinstall',), {}),
-            ('fire_event_async().__iter__', (), {}),
         ])
 
     def test_017_notify_tools_template_based(self):
@@ -184,6 +187,58 @@ class TC_00_CoreFeatures(qubes.tests.QubesTestCase):
             ('features.__contains__', ('gui',), {}),
         ])
 
+    def test_20_version(self):
+        self.features['qrexec'] = True
+        del self.vm.template
+        self.loop.run_until_complete(
+            self.ext.qubes_features_request(self.vm, 'features-request',
+                untrusted_features={
+                    'qubes-agent-version': '4.1'
+                }))
+        self.assertListEqual(self.vm.mock_calls, [
+            ('features.__setitem__', ('qubes-agent-version', '4.1'), {}),
+            ('features.get', ('qrexec', False), {}),
+        ])
+
+    def test_21_version_invalid(self):
+        self.features['qrexec'] = True
+        del self.vm.template
+        self.loop.run_until_complete(
+            self.ext.qubes_features_request(self.vm, 'features-request',
+                untrusted_features={
+                    'qubes-agent-version': '4'
+                }))
+        self.assertListEqual(self.vm.mock_calls, [
+            ('features.get', ('qrexec', False), {}),
+        ])
+        self.vm.mock_calls.clear()
+        self.loop.run_until_complete(
+            self.ext.qubes_features_request(self.vm, 'features-request',
+                untrusted_features={
+                    'qubes-agent-version': '4.1.1'
+                }))
+        self.assertListEqual(self.vm.mock_calls, [
+            ('features.get', ('qrexec', False), {}),
+        ])
+        self.vm.mock_calls.clear()
+        self.loop.run_until_complete(
+            self.ext.qubes_features_request(self.vm, 'features-request',
+                untrusted_features={
+                    'qubes-agent-version': 'notnumeric'
+                }))
+        self.assertListEqual(self.vm.mock_calls, [
+            ('features.get', ('qrexec', False), {}),
+        ])
+        self.vm.mock_calls.clear()
+        self.loop.run_until_complete(
+            self.ext.qubes_features_request(self.vm, 'features-request',
+                untrusted_features={
+                    'qubes-agent-version': '40000000'
+                }))
+        self.assertListEqual(self.vm.mock_calls, [
+            ('features.get', ('qrexec', False), {}),
+        ])
+
     def test_100_servicevm_feature(self):
         self.vm.provides_network = True
         self.ext.set_servicevm_feature(self.vm)
@@ -199,12 +254,21 @@ class TC_10_WindowsFeatures(qubes.tests.QubesTestCase):
         super().setUp()
         self.ext = qubes.ext.windows.WindowsFeatures()
         self.vm = mock.MagicMock()
+        self.template_features = {}
         self.features = {}
         self.vm.configure_mock(**{
             'features.get.side_effect': self.features.get,
+            'features.check_with_template.side_effect': self.mock_check_with_template,
             'features.__contains__.side_effect': self.features.__contains__,
             'features.__setitem__.side_effect': self.features.__setitem__,
             })
+
+    def mock_check_with_template(self, name, default):
+        if hasattr(self.vm, 'template'):
+            return self.features.get(name,
+                self.template_features.get(name, default))
+        else:
+            return self.features.get(name, default)
 
     def test_000_notify_tools_full(self):
         del self.vm.template
@@ -215,10 +279,16 @@ class TC_10_WindowsFeatures(qubes.tests.QubesTestCase):
                 'default-user': 'user',
                 'qrexec': '1',
                 'os': 'Windows'})
-        self.assertEqual(self.vm.mock_calls, [
-            ('features.__setitem__', ('os', 'Windows'), {}),
-            ('features.__setitem__', ('rpc-clipboard', True), {}),
-        ])
+        self.assertEqual(self.features, {
+                'os': 'Windows',
+                'rpc-clipboard': True,
+                'stubdom-qrexec': True,
+                'audio-model': 'ich6',
+                'timezone': 'localtime',
+                'no-monitor-layout': True,
+        })
+        self.assertEqual(self.vm.maxmem, 0);
+        self.assertEqual(self.vm.qrexec_timeout, 6000);
 
     def test_001_notify_tools_no_qrexec(self):
         del self.vm.template
@@ -229,9 +299,9 @@ class TC_10_WindowsFeatures(qubes.tests.QubesTestCase):
                 'default-user': 'user',
                 'qrexec': '0',
                 'os': 'Windows'})
-        self.assertEqual(self.vm.mock_calls, [
-            ('features.__setitem__', ('os', 'Windows'), {}),
-        ])
+        self.assertEqual(self.features, {
+                'os': 'Windows',
+        })
 
     def test_002_notify_tools_other_os(self):
         del self.vm.template
@@ -242,7 +312,26 @@ class TC_10_WindowsFeatures(qubes.tests.QubesTestCase):
                 'default-user': 'user',
                 'qrexec': '1',
                 'os': 'other'})
-        self.assertEqual(self.vm.mock_calls, [])
+        self.assertEqual(self.features, {})
+
+    def test_003_notify_tools_no_override(self):
+        del self.vm.template
+        self.features['audio-model'] = 'ich9'
+        self.ext.qubes_features_request(self.vm, 'features-request',
+            untrusted_features={
+                'gui': '1',
+                'version': '1',
+                'default-user': 'user',
+                'qrexec': '1',
+                'os': 'Windows'})
+        self.assertEqual(self.features, {
+                'os': 'Windows',
+                'rpc-clipboard': True,
+                'stubdom-qrexec': True,
+                'audio-model': 'ich9',
+                'timezone': 'localtime',
+                'no-monitor-layout': True,
+        })
 
 class TC_20_Services(qubes.tests.QubesTestCase):
     def setUp(self):
@@ -396,6 +485,66 @@ class TC_20_Services(qubes.tests.QubesTestCase):
 
         self.assertEqual(os.path.exists(service_path), False)
 
+
+class TC_20_VmConfig(qubes.tests.QubesTestCase):
+    def setUp(self):
+        super().setUp()
+        self.ext = qubes.ext.vm_config.VMConfig()
+        self.features = {}
+        specs = {
+            'features.get.side_effect': self.features.get,
+            'features.items.side_effect': self.features.items,
+            'features.__iter__.side_effect': self.features.__iter__,
+            'features.__contains__.side_effect': self.features.__contains__,
+            'features.__setitem__.side_effect': self.features.__setitem__,
+            'features.__delitem__.side_effect': self.features.__delitem__,
+        }
+
+        vmspecs = {**specs, **{
+            'template': None,
+            }}
+        self.vm = mock.MagicMock()
+        self.vm.configure_mock(**vmspecs)
+
+    def test_000_write_to_qdb(self):
+        self.features['vm-config.test1'] = '1'
+        self.features['vm-config.test2'] = 'teststring'
+
+        self.ext.on_domain_qdb_create(self.vm, 'domain-qdb-create')
+        self.assertEqual(sorted(self.vm.untrusted_qdb.mock_calls), [
+            ('write', ('/vm-config/test1', '1'), {}),
+            ('write', ('/vm-config/test2', 'teststring'), {}),
+        ])
+
+    def test_001_feature_set(self):
+        self.ext.on_domain_feature_set(self.vm,
+            'feature-set:vm-config.test_no_oldvalue',
+            'vm-config.test_no_oldvalue', 'testvalue')
+        self.ext.on_domain_feature_set(self.vm,
+            'feature-set:vm-config.test_oldvalue',
+            'vm-config.test_oldvalue', 'newvalue', '')
+        self.ext.on_domain_feature_set(self.vm,
+            'feature-set:vm-config.test_disable',
+            'vm-config.test_disable', '', 'oldvalue')
+        self.ext.on_domain_feature_set(self.vm,
+            'feature-set:vm-config.test_disable_no_oldvalue',
+            'vm-config.test_disable_no_oldvalue', '')
+
+        self.assertEqual(sorted(self.vm.untrusted_qdb.mock_calls), sorted([
+            ('write', ('/vm-config/test_no_oldvalue', 'testvalue'), {}),
+            ('write', ('/vm-config/test_oldvalue', 'newvalue'), {}),
+            ('write', ('/vm-config/test_disable', ''), {}),
+            ('write', ('/vm-config/test_disable_no_oldvalue', ''), {}),
+        ]))
+
+    def test_002_feature_delete(self):
+        self.ext.on_domain_feature_delete(self.vm,
+            'feature-delete:vm-config.test3', 'vm-config.test3')
+        self.assertEqual(sorted(self.vm.untrusted_qdb.mock_calls), [
+            ('rm', ('/vm-config/test3',), {}),
+        ])
+
+
 class TC_30_SupportedFeatures(qubes.tests.QubesTestCase):
     def setUp(self):
         super().setUp()
@@ -455,4 +604,39 @@ class TC_30_SupportedFeatures(qubes.tests.QubesTestCase):
             })
         self.assertEqual(self.features, {
             'supported-feature.test2': True,
+        })
+
+    def test_020_supported_rpc(self):
+        self.ext.supported_rpc(self.vm, 'features-request',
+            untrusted_features={
+                'supported-rpc.qubes.SomeService': '1',  # ok
+                'supported-rpc.test2': '0',  # ignored
+                'supported-rpc.test3': 'some text',  # ignored
+                'no-feature': '1',  # ignored
+            })
+        self.assertEqual(self.features, {
+            'supported-rpc.qubes.SomeService': True,
+        })
+
+    def test_021_supported_rpc_add(self):
+        self.features['supported-rpc.qubes.SomeService'] = '1'
+        self.ext.supported_rpc(self.vm, 'features-request',
+            untrusted_features={
+                'supported-rpc.qubes.SomeService': '1',  # ok
+                'supported-rpc.test2': '1',  # ok
+            })
+        # also check if existing one is untouched
+        self.assertEqual(self.features, {
+            'supported-rpc.qubes.SomeService': '1',
+            'supported-rpc.test2': True,
+        })
+
+    def test_022_supported_rpc_remove(self):
+        self.features['supported-rpc.qubes.SomeService'] = '1'
+        self.ext.supported_rpc(self.vm, 'features-request',
+            untrusted_features={
+                'supported-rpc.test2': '1',  # ok
+            })
+        self.assertEqual(self.features, {
+            'supported-rpc.test2': True,
         })

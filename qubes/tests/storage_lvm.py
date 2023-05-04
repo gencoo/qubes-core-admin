@@ -35,7 +35,7 @@ import asyncio
 import qubes.tests
 import qubes.tests.storage
 import qubes.storage
-from qubes.storage.lvm import ThinPool, ThinVolume, qubes_lvm
+from qubes.storage.lvm import ThinPool, ThinVolume, qubes_lvm_coro
 
 if 'DEFAULT_LVM_POOL' in os.environ.keys():
     DEFAULT_LVM_POOL = os.environ['DEFAULT_LVM_POOL']
@@ -227,6 +227,11 @@ class TC_00_ThinPool(ThinPoolBase):
         pool_usage = float(pool_usage)
         self.assertEqual(usage, int(pool_size * pool_usage / 100))
 
+    def __assertPathMatch(self, path1, path2):
+        self.assertEqual(path1[:12], '/dev/mapper/')
+        self.assertEqual(path2[:5], '/dev/')
+        self.assertEqual(path1[12:], path2[5:].replace('-', '--').replace('/', '-'))
+
     def _get_size(self, path):
         if os.getuid() != 0:
             return int(
@@ -289,16 +294,8 @@ class TC_00_ThinPool(ThinPoolBase):
 
     def _get_lv_origin_uuid(self, lv):
         sudo = [] if os.getuid() == 0 else ['sudo']
-        if qubes.storage.lvm.lvm_is_very_old:
-            # no support for origin_uuid directly
-            lvs_output = subprocess.check_output(
-                sudo + ['lvs', '--noheadings', '-o', 'origin', lv])
-            lvs_output = subprocess.check_output(
-                sudo + ['lvs', '--noheadings', '-o', 'lv_uuid',
-                    lv.rsplit('/', 1)[0] + '/' + lvs_output.strip().decode()])
-        else:
-            lvs_output = subprocess.check_output(
-                sudo + ['lvs', '--noheadings', '-o', 'origin_uuid', lv])
+        lvs_output = subprocess.check_output(
+            sudo + ['lvs', '--noheadings', '-o', 'origin_uuid', lv])
         return lvs_output.strip()
 
     def test_008_commit(self):
@@ -320,7 +317,7 @@ class TC_00_ThinPool(ThinPoolBase):
         snap_uuid = self._get_lv_uuid(path_snap)
         self.assertNotEqual(origin_uuid, snap_uuid)
         path = volume.path
-        self.assertTrue(path.startswith('/dev/' + volume.vid),
+        self.assertTrue(path.startswith('/dev/mapper/' + volume.vid.replace('-', '--').replace('/', '-')),
                         '{} does not start with /dev/{}'.format(path, volume.vid))
         self.assertTrue(os.path.exists(path), path)
         self.loop.run_until_complete(volume.remove())
@@ -346,12 +343,12 @@ class TC_00_ThinPool(ThinPoolBase):
         for rev in revisions:
             cmd = ['create', self.pool._pool_id,
                    volume.vid.split('/')[1] + rev, str(config['size'])]
-            qubes_lvm(cmd)
+            self.loop.run_until_complete(qubes_lvm_coro(cmd))
             orig_uuids[rev] = self._get_lv_uuid(volume.vid + rev)
         qubes.storage.lvm.reset_cache()
         path_snap = '/dev/' + volume._vid_snap
         self.assertTrue(volume.is_dirty())
-        self.assertEqual(volume.path,
+        self.__assertPathMatch(volume.path,
                          '/dev/' + volume.vid + revisions[1])
         expected_revisions = {
             revisions[0].lstrip('-'): '2018-03-14T22:18:24',
@@ -363,7 +360,7 @@ class TC_00_ThinPool(ThinPoolBase):
         snap_uuid = self._get_lv_uuid(path_snap)
         self.assertEqual(orig_uuids['-snap'], snap_uuid)
         self.assertTrue(volume.is_dirty())
-        self.assertEqual(volume.path,
+        self.__assertPathMatch(volume.path,
                          '/dev/' + volume.vid + revisions[1])
         with unittest.mock.patch('time.time') as mock_time:
             mock_time.side_effect = [521065906]
@@ -374,7 +371,7 @@ class TC_00_ThinPool(ThinPoolBase):
         }
         self.assertFalse(volume.is_dirty())
         self.assertEqual(volume.revisions, expected_revisions)
-        self.assertEqual(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
         self.assertEqual(snap_uuid, self._get_lv_uuid(volume.path))
         self.assertFalse(os.path.exists(path_snap), path_snap)
 
@@ -400,7 +397,7 @@ class TC_00_ThinPool(ThinPoolBase):
         for rev in revisions:
             cmd = ['create', self.pool._pool_id,
                    volume.vid.split('/')[1] + rev, str(config['size'])]
-            qubes_lvm(cmd)
+            self.loop.run_until_complete(qubes_lvm_coro(cmd))
             orig_uuids[rev] = self._get_lv_uuid(volume.vid + rev)
         qubes.storage.lvm.reset_cache()
         path_snap = '/dev/' + volume._vid_snap
@@ -410,7 +407,7 @@ class TC_00_ThinPool(ThinPoolBase):
             revisions[2].lstrip('-'): '2018-03-14T22:18:25',
         }
         self.assertEqual(volume.revisions, expected_revisions)
-        self.assertEqual(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
 
         self.loop.run_until_complete(volume.start())
         snap_uuid = self._get_lv_uuid(path_snap)
@@ -418,7 +415,7 @@ class TC_00_ThinPool(ThinPoolBase):
         snap_origin_uuid = self._get_lv_origin_uuid(path_snap)
         self.assertEqual(orig_uuids[''], snap_origin_uuid)
         path = volume.path
-        self.assertEqual(path, '/dev/' + volume.vid)
+        self.__assertPathMatch(path, '/dev/' + volume.vid)
         self.assertTrue(os.path.exists(path), path)
 
         with unittest.mock.patch('time.time') as mock_time:
@@ -430,11 +427,11 @@ class TC_00_ThinPool(ThinPoolBase):
             revisions[3].lstrip('-'): '2018-03-14T22:18:26',
         }
         self.assertEqual(volume.revisions, expected_revisions)
-        self.assertEqual(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
         path_snap = '/dev/' + volume._vid_snap
         self.assertFalse(os.path.exists(path_snap), path_snap)
         self.assertTrue(os.path.exists('/dev/' + volume.vid))
-        self.assertEqual(self._get_lv_uuid(volume.path), snap_uuid)
+        self.assertEqual(self._get_lv_uuid(volume._vid_current), snap_uuid)
         prev_path = '/dev/' + volume.vid + revisions[3]
         self.assertEqual(self._get_lv_uuid(prev_path), orig_uuids[''])
 
@@ -463,18 +460,18 @@ class TC_00_ThinPool(ThinPoolBase):
         for rev in revisions:
             cmd = ['create', self.pool._pool_id,
                    volume.vid.split('/')[1] + rev, str(config['size'])]
-            qubes_lvm(cmd)
+            self.loop.run_until_complete(qubes_lvm_coro(cmd))
             orig_uuids[rev] = self._get_lv_uuid(volume.vid + rev)
         qubes.storage.lvm.reset_cache()
         path_snap = '/dev/' + volume._vid_snap
         self.assertTrue(os.path.exists(path_snap), path_snap)
         expected_revisions = {}
         self.assertEqual(volume.revisions, expected_revisions)
-        self.assertEqual(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
         self.assertTrue(volume.is_dirty())
 
         path = volume.path
-        self.assertEqual(path, '/dev/' + volume.vid)
+        self.__assertPathMatch(path, '/dev/' + volume.vid)
         self.assertTrue(os.path.exists(path), path)
 
         with unittest.mock.patch('time.time') as mock_time:
@@ -485,11 +482,11 @@ class TC_00_ThinPool(ThinPoolBase):
             revisions[2].lstrip('-'): '2018-03-14T22:18:26',
         }
         self.assertEqual(volume.revisions, expected_revisions)
-        self.assertEqual(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
         path_snap = '/dev/' + volume._vid_snap
         self.assertFalse(os.path.exists(path_snap), path_snap)
         self.assertTrue(os.path.exists('/dev/' + volume.vid))
-        self.assertEqual(self._get_lv_uuid(volume.path), orig_uuids['-snap'])
+        self.assertEqual(self._get_lv_uuid(volume._vid_current), orig_uuids['-snap'])
         prev_path = '/dev/' + volume.vid + revisions[2]
         self.assertEqual(self._get_lv_uuid(prev_path), orig_uuids[''])
 
@@ -518,19 +515,19 @@ class TC_00_ThinPool(ThinPoolBase):
         for rev in revisions:
             cmd = ['create', self.pool._pool_id,
                    volume.vid.split('/')[1] + rev, str(config['size'])]
-            qubes_lvm(cmd)
+            self.loop.run_until_complete(qubes_lvm_coro(cmd))
             orig_uuids[rev] = self._get_lv_uuid(volume.vid + rev)
         qubes.storage.lvm.reset_cache()
         path_snap = '/dev/' + volume._vid_snap
         self.assertTrue(os.path.exists(path_snap), path_snap)
         expected_revisions = {}
         self.assertEqual(volume.revisions, expected_revisions)
-        self.assertTrue(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
         self.assertTrue(volume.is_dirty())
 
         self.loop.run_until_complete(volume.start())
         self.assertEqual(volume.revisions, expected_revisions)
-        self.assertEqual(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
         # -snap LV should be unchanged
         self.assertEqual(self._get_lv_uuid(volume._vid_snap),
                          orig_uuids['-snap'])
@@ -560,14 +557,14 @@ class TC_00_ThinPool(ThinPoolBase):
         for rev in revisions:
             cmd = ['create', self.pool._pool_id,
                    volume.vid.split('/')[1] + rev, str(config['size'])]
-            qubes_lvm(cmd)
+            self.loop.run_until_complete(qubes_lvm_coro(cmd))
             orig_uuids[rev] = self._get_lv_uuid(volume.vid + rev)
         qubes.storage.lvm.reset_cache()
         path_snap = '/dev/' + volume._vid_snap
         self.assertTrue(os.path.exists(path_snap), path_snap)
         expected_revisions = {}
         self.assertEqual(volume.revisions, expected_revisions)
-        self.assertEqual(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
         self.assertTrue(volume.is_dirty())
 
         with unittest.mock.patch('time.time') as mock_time:
@@ -575,7 +572,7 @@ class TC_00_ThinPool(ThinPoolBase):
             self.loop.run_until_complete(volume.stop())
         expected_revisions = {}
         self.assertEqual(volume.revisions, expected_revisions)
-        self.assertEqual(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
 
         self.loop.run_until_complete(volume.remove())
         for rev in revisions:
@@ -614,7 +611,7 @@ class TC_00_ThinPool(ThinPoolBase):
             self.loop.run_until_complete(volume.stop())
         self.assertFalse(volume.is_dirty())
         self.assertEqual(volume.revisions, {})
-        self.assertEqual(volume.path, '/dev/' + volume.vid)
+        self.__assertPathMatch(volume.path, '/dev/' + volume.vid)
         self.assertEqual(snap_uuid, self._get_lv_uuid(volume.path))
         self.assertFalse(os.path.exists(path_snap), path_snap)
 
@@ -874,6 +871,8 @@ class TC_00_ThinPool(ThinPoolBase):
         }
         vm = qubes.tests.storage.TestVM(self)
         volume = self.app.get_pool(self.pool.name).init_volume(vm, config)
+        # mock logging, to not interfere with time.time() mock
+        volume.log = unittest.mock.Mock()
         with unittest.mock.patch('time.time') as mock_time:
             mock_time.side_effect = [1521065905]
             self.loop.run_until_complete(volume.create())
@@ -929,23 +928,92 @@ class TC_00_ThinPool(ThinPoolBase):
         vm = qubes.tests.storage.TestVM(self)
         volume = self.app.get_pool(self.pool.name).init_volume(vm, config)
         # volatile volume don't need any file, verify should succeed
-        self.assertTrue(volume.verify())
+        self.assertTrue(self.loop.run_until_complete(volume.verify()), 'volume cannot be verified?')
         self.loop.run_until_complete(volume.create())
-        self.assertTrue(volume.verify())
-        self.assertFalse(volume.save_on_stop)
-        self.assertFalse(volume.snap_on_start)
+        self.assertTrue(self.loop.run_until_complete(volume.verify()), 'volume cannot be verified?')
+        self.assertFalse(volume.save_on_stop, 'volume is save_on_stop?')
+        self.assertFalse(volume.snap_on_start, 'volume is snap_on_start?')
+        self.assertFalse(volume.ephemeral, 'volume is ephemeral by default?')
+        self.assertFalse(volume.pool.ephemeral_volatile, 'pool enabled ephemeral volatile volumes?')
+        volume.pool.ephemeral_volatile = True
+        self.assertTrue(volume.ephemeral, 'pool changes should be reflected in the volume')
+        volume.pool.ephemeral_volatile = False
+        self.assertFalse(volume.ephemeral, 'volume is ephemeral by default?')
         path = volume.path
-        self.assertEqual(path, '/dev/' + volume.vid)
-        self.assertFalse(os.path.exists(path))
-        self.loop.run_until_complete(volume.start())
-        self.assertTrue(os.path.exists(path))
+        self.__assertPathMatch(path, '/dev/' + volume.vid)
+        self.assertFalse(os.path.exists(path), 'volume path %r exists but should not!' % path)
+        encrypted_path = volume.encrypted_volume_path(vm.name, config['name'])
+        self.loop.run_until_complete(volume.start_encrypted(encrypted_path))
+        self.assertTrue(os.path.exists(path), 'volume path %r does not exist but should!' % path)
+        self.assertTrue(os.path.exists(encrypted_path), 'encrypted path %r does not exist but should!' % encrypted_path)
+        self.assertNotEqual(path, encrypted_path)
+        bdev = volume.make_encrypted_device(volume.block_device(), vm.name)
+        self.assertTrue(bdev.domain is None)
+        self.assertEqual(bdev.devtype, 'disk')
+        self.assertEqual(bdev.name, 'volatile')
+        self.assertTrue(bdev.path.startswith('/dev/mapper/vg'))
+        self.assertTrue(bdev.path.endswith('-vm--test--inst--appvm--volatile@crypt'))
+        self.assertEqual(bdev.path, '/dev/mapper/' + '-'.join(i.replace('-', '--') for i in volume.vid.split('/')) + '@crypt')
+        self.assertTrue(encrypted_path.startswith('/dev/mapper/'), 'bad path %r' % encrypted_path)
+        self.assertTrue(encrypted_path.endswith('@crypt'), 'bad encrypted path %r' % encrypted_path)
         vol_uuid = self._get_lv_uuid(path)
-        self.loop.run_until_complete(volume.start())
-        self.assertTrue(os.path.exists(path))
+        self.loop.run_until_complete(volume.start_encrypted(encrypted_path))
+        self.assertTrue(os.path.exists(path), 'time 2: volume path %r does not exist but should!' % path)
         vol_uuid2 = self._get_lv_uuid(path)
         self.assertNotEqual(vol_uuid, vol_uuid2)
-        self.loop.run_until_complete(volume.stop())
-        self.assertFalse(os.path.exists(path))
+        self.loop.run_until_complete(volume.stop_encrypted(
+            volume.encrypted_volume_path(vm.name, config['name'])))
+        self.assertFalse(os.path.exists(path), 'after stop: volume path %r exists but should not!' % path)
+        # Check that the volume can be successfully restarted
+        self.loop.run_until_complete(volume.start_encrypted(encrypted_path))
+        self.loop.run_until_complete(volume.stop_encrypted(encrypted_path))
+
+    def test_041_volatile_encrypted(self):
+        '''Volatile volume test'''
+        config = {
+            'name': 'volatile',
+            'pool': self.pool.name,
+            'rw': True,
+            'size': qubes.config.defaults['root_img_size'],
+            'ephemeral': True,
+        }
+        vm = qubes.tests.storage.TestVM(self)
+        volume = self.app.get_pool(self.pool.name).init_volume(vm, config)
+        # volatile volume don't need any file, verify should succeed
+        self.assertTrue(self.loop.run_until_complete(volume.verify()), 'volume cannot be verified?')
+        self.loop.run_until_complete(volume.create())
+        self.assertTrue(self.loop.run_until_complete(volume.verify()), 'volume cannot be verified?')
+        self.assertFalse(volume.save_on_stop, 'volume is save_on_stop?')
+        self.assertFalse(volume.snap_on_start, 'volume is snap_on_start?')
+        self.assertTrue(volume.ephemeral, 'volume is not ephemeral?')
+        path = volume.path
+        self.__assertPathMatch(path, '/dev/' + volume.vid)
+        self.assertFalse(os.path.exists(path), 'volume path %r exists but should not!' % path)
+        encrypted_path = volume.encrypted_volume_path(vm.name, config['name'])
+        self.loop.run_until_complete(volume.start_encrypted(encrypted_path))
+        self.assertTrue(os.path.exists(path), 'volume path %r does not exist but should!' % path)
+        self.assertTrue(os.path.exists(encrypted_path), 'encrypted path %r does not exist but should!' % encrypted_path)
+        self.assertNotEqual(path, encrypted_path)
+        bdev = volume.make_encrypted_device(volume.block_device(), vm.name)
+        self.assertTrue(bdev.domain is None)
+        self.assertEqual(bdev.devtype, 'disk')
+        self.assertEqual(bdev.name, 'volatile')
+        self.assertTrue(bdev.path.startswith('/dev/mapper/vg'))
+        self.assertTrue(bdev.path.endswith('-vm--test--inst--appvm--volatile@crypt'))
+        self.assertEqual(bdev.path, '/dev/mapper/' + '-'.join(i.replace('-', '--') for i in volume.vid.split('/')) + '@crypt')
+        self.assertTrue(encrypted_path.startswith('/dev/mapper/'), 'bad path %r' % encrypted_path)
+        self.assertTrue(encrypted_path.endswith('@crypt'), 'bad encrypted path %r' % encrypted_path)
+        vol_uuid = self._get_lv_uuid(path)
+        self.loop.run_until_complete(volume.start_encrypted(encrypted_path))
+        self.assertTrue(os.path.exists(path), 'time 2: volume path %r does not exist but should!' % path)
+        vol_uuid2 = self._get_lv_uuid(path)
+        self.assertNotEqual(vol_uuid, vol_uuid2)
+        self.loop.run_until_complete(volume.stop_encrypted(
+            volume.encrypted_volume_path(vm.name, config['name'])))
+        self.assertFalse(os.path.exists(path), 'after stop: volume path %r exists but should not!' % path)
+        # Check that the volume can be successfully restarted
+        self.loop.run_until_complete(volume.start_encrypted(encrypted_path))
+        self.loop.run_until_complete(volume.stop_encrypted(encrypted_path))
 
     def test_050_snapshot_volume(self):
         ''' Test snapshot volume creation '''
@@ -976,10 +1044,10 @@ class TC_00_ThinPool(ThinPoolBase):
         self.assertEqual(volume.size, qubes.config.defaults['root_img_size'])
         # only origin volume really needs to exist, verify should succeed
         # even before create
-        self.assertTrue(volume.verify())
+        self.assertTrue(self.loop.run_until_complete(volume.verify()))
         self.loop.run_until_complete(volume.create())
         path = volume.path
-        self.assertEqual(path, '/dev/' + volume.vid)
+        self.__assertPathMatch(path, '/dev/' + volume.vid)
         self.assertFalse(os.path.exists(path), path)
         self.loop.run_until_complete(volume.start())
         # snapshot volume isn't considered dirty at any time
@@ -1072,6 +1140,35 @@ class TC_00_ThinPool(ThinPoolBase):
         pool_usage = float(pool_usage)
         self.assertEqual(metadata_usage, int(pool_size * pool_usage / 100))
 
+    def test_120_only_certain_volumes_ephemeral(self):
+        ''' Test that only volumes that can be ephemeral are '''
+        config = {
+            'name': 'root',
+            'pool': self.pool.name,
+            'save_on_stop': True,
+            'rw': True,
+            'size': qubes.config.defaults['root_img_size'],
+        }
+        vm = qubes.tests.storage.TestVM(self)
+        volume = self.app.get_pool(self.pool.name).init_volume(vm, config)
+        self.assertFalse(volume.pool.ephemeral_volatile)
+        self.assertFalse(volume.ephemeral)
+        volume.pool.ephemeral_volatile = True
+        self.assertFalse(volume.ephemeral,
+                         'ephemeral_volatile flag must be ignored for save_on_stop volumes')
+        volume.save_on_stop = False
+        self.assertTrue(volume.ephemeral,
+                        'ephemeral_volatile flag honored for volumes that meet the criteria')
+        volume.snap_on_start = True
+        self.assertFalse(volume.ephemeral,
+                         'ephemeral_volatile flag must be ignored for snap_on_start volumes')
+        volume.snap_on_start = False
+        self.assertTrue(volume.ephemeral,
+                        'ephemeral_volatile flag honored for volumes that meet the criteria')
+        volume.rw = False
+        self.assertFalse(volume.ephemeral,
+                         'ephemeral_volatile flag must be ignored for read-only volumes')
+
 
 @skipUnlessLvmPoolExists
 class TC_01_ThinPool(ThinPoolBase, qubes.tests.SystemTestCase):
@@ -1093,7 +1190,7 @@ class TC_01_ThinPool(ThinPoolBase, qubes.tests.SystemTestCase):
             if volume.save_on_stop:
                 expected = "/dev/{!s}/vm-{!s}-{!s}".format(
                     DEFAULT_LVM_POOL.split('/')[0], vm.name, v_name)
-                self.assertEqual(volume.path, expected)
+                self.__assertPathMatch(volume.path, expected)
         with self.assertNotRaises(qubes.exc.QubesException):
             self.loop.run_until_complete(vm.start())
 
@@ -1105,7 +1202,7 @@ class TC_01_ThinPool(ThinPoolBase, qubes.tests.SystemTestCase):
             if volume.save_on_stop:
                 expected = "/dev/{!s}/vm-{!s}-{!s}".format(
                     DEFAULT_LVM_POOL.split('/')[0], vm.name, v_name)
-                self.assertEqual(volume.path, expected)
+                self.__assertPathMatch(volume.path, expected)
         with self.assertNotRaises(qubes.exc.QubesException):
             self.loop.run_until_complete(vm.start())
 
@@ -1116,8 +1213,8 @@ class TC_01_ThinPool(ThinPoolBase, qubes.tests.SystemTestCase):
         vm2 = self.app.add_new_vm(cls=qubes.vm.appvm.AppVM,
             name=self.make_vm_name('appvm-root'), label='red')
         self.loop.run_until_complete(asyncio.wait([
-            vm1.create_on_disk(pool=self.pool.name),
-            vm2.create_on_disk(pool=self.pool.name)]))
+            self.loop.create_task(vm1.create_on_disk(pool=self.pool.name)),
+            self.loop.create_task(vm2.create_on_disk(pool=self.pool.name))]))
         self.loop.run_until_complete(vm2.start())
         self.loop.run_until_complete(vm2.shutdown(wait=True))
         with self.assertNotRaises(ValueError):

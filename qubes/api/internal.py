@@ -55,8 +55,7 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
     SOCKNAME = '/var/run/qubesd.internal.sock'
 
     @qubes.api.method('internal.GetSystemInfo', no_payload=True)
-    @asyncio.coroutine
-    def getsysteminfo(self):
+    async def getsysteminfo(self):
         self.enforce(self.dest.name == 'dom0')
         self.enforce(not self.arg)
 
@@ -66,8 +65,7 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
 
     @qubes.api.method('internal.vm.volume.ImportBegin',
         scope='local', write=True)
-    @asyncio.coroutine
-    def vm_volume_import(self, untrusted_payload):
+    async def vm_volume_import(self, untrusted_payload):
         """Begin importing volume data. Payload is either size of new data
         in bytes, or empty. If empty, the current volume's size will be used.
         Returns size and path to where data should be written.
@@ -93,18 +91,11 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
         if not self.dest.is_halted():
             raise qubes.exc.QubesVMNotHaltedError(self.dest)
 
-        requested_size = None
-        if untrusted_payload:
-            try:
-                untrusted_value = int(untrusted_payload.decode('ascii'))
-            except (UnicodeDecodeError, ValueError):
-                raise qubes.api.ProtocolError('Invalid value')
-            self.enforce(untrusted_value > 0)
-            requested_size = untrusted_value
-            del untrusted_value
+        requested_size = (self.validate_size(untrusted_payload)
+                          if untrusted_payload else None)
         del untrusted_payload
 
-        path = yield from self.dest.storage.import_data(
+        path = await self.dest.storage.import_data(
             self.arg, requested_size)
         self.enforce(' ' not in path)
         if requested_size is None:
@@ -120,8 +111,7 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
         return '{} {}'.format(size, path)
 
     @qubes.api.method('internal.vm.volume.ImportEnd')
-    @asyncio.coroutine
-    def vm_volume_import_end(self, untrusted_payload):
+    async def vm_volume_import_end(self, untrusted_payload):
         '''
         This is second half of admin.vm.volume.Import handling. It is called
         when actual import is finished. Response from this method is sent do
@@ -133,7 +123,7 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
         success = untrusted_payload == b'ok'
 
         try:
-            yield from self.dest.storage.import_data_end(self.arg,
+            await self.dest.storage.import_data_end(self.arg,
                 success=success)
         except:
             self.dest.fire_event('domain-volume-import-end', volume=self.arg,
@@ -152,8 +142,7 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
                 'Data import failed: {}'.format(error))
 
     @qubes.api.method('internal.SuspendPre', no_payload=True)
-    @asyncio.coroutine
-    def suspend_pre(self):
+    async def suspend_pre(self):
         '''
         Method called before host system goes to sleep.
 
@@ -170,7 +159,7 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
             if not vm.features.check_with_template('qrexec', False):
                 continue
             try:
-                proc = yield from vm.run_service(
+                proc = await vm.run_service(
                     'qubes.SuspendPreAll', user='root',
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
@@ -179,9 +168,21 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
             except qubes.exc.QubesException as e:
                 vm.log.warning('Failed to run qubes.SuspendPreAll: %s', str(e))
 
-        # FIXME: some timeout?
         if processes:
-            yield from asyncio.wait([p.wait() for p in processes])
+            done, _ = await asyncio.wait([
+                    asyncio.create_task(
+                        asyncio.wait_for(p.wait(),
+                                         qubes.config.suspend_timeout))
+                    for p in processes])
+            for task in done:
+                try:
+                    task.result()
+                except asyncio.TimeoutError:
+                    self.app.log.warning(
+                        "some qube timed out after %d seconds on %s call",
+                        qubes.config.suspend_timeout,
+                        "qubes.SuspendPreAll"
+                    )
 
         coros = []
         # then suspend/pause VMs
@@ -189,13 +190,21 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
             if isinstance(vm, qubes.vm.adminvm.AdminVM):
                 continue
             if vm.is_running():
-                coros.append(vm.suspend())
+                coros.append(asyncio.create_task(vm.suspend()))
         if coros:
-            yield from asyncio.wait(coros)
+            done, _ = await asyncio.wait(coros)
+            failed = ""
+            for coro in done:
+                try:
+                    coro.result()
+                except Exception as e:  # pylint: disable=broad-except
+                    failed += f'\n{e!s}'
+            if failed:
+                raise qubes.exc.QubesException(
+                    "Failed to suspend some qubes: {}".format(failed))
 
     @qubes.api.method('internal.SuspendPost', no_payload=True)
-    @asyncio.coroutine
-    def suspend_post(self):
+    async def suspend_post(self):
         '''
         Method called after host system wake up from sleep.
 
@@ -208,9 +217,9 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
             if isinstance(vm, qubes.vm.adminvm.AdminVM):
                 continue
             if vm.get_power_state() in ["Paused", "Suspended"]:
-                coros.append(vm.resume())
+                coros.append(asyncio.create_task(vm.resume()))
         if coros:
-            yield from asyncio.wait(coros)
+            await asyncio.wait(coros)
 
         # then notify all VMs
         processes = []
@@ -222,7 +231,7 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
             if not vm.features.check_with_template('qrexec', False):
                 continue
             try:
-                proc = yield from vm.run_service(
+                proc = await vm.run_service(
                     'qubes.SuspendPostAll', user='root',
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
@@ -231,6 +240,17 @@ class QubesInternalAPI(qubes.api.AbstractQubesAPI):
             except qubes.exc.QubesException as e:
                 vm.log.warning('Failed to run qubes.SuspendPostAll: %s', str(e))
 
-        # FIXME: some timeout?
         if processes:
-            yield from asyncio.wait([p.wait() for p in processes])
+            done, _ = await asyncio.wait(
+                    [asyncio.create_task(asyncio.wait_for(p.wait(),
+                                         qubes.config.suspend_timeout))
+                     for p in processes])
+            for task in done:
+                try:
+                    task.result()
+                except asyncio.TimeoutError:
+                    self.app.log.warning(
+                        "some qube timed out after %d seconds on %s call",
+                        qubes.config.suspend_timeout,
+                        "qubes.SuspendPostAll"
+                    )

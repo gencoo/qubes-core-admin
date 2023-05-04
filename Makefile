@@ -1,8 +1,8 @@
 RPMS_DIR=rpm/
 
-VERSION := $(shell cat version)
+VERSION := $(file <version)
 
-DIST_DOM0 ?= fc18
+DIST_DOM0 ?= fc32
 
 OS ?= Linux
 PYTHON ?= python3
@@ -25,12 +25,14 @@ ADMIN_API_METHODS_SIMPLE = \
 	admin.pool.List \
 	admin.pool.ListDrivers \
 	admin.pool.Remove \
+	admin.pool.Set.ephemeral_volatile \
 	admin.pool.Set.revisions_to_keep \
 	admin.pool.volume.Info \
 	admin.pool.volume.List \
 	admin.pool.volume.ListSnapshots \
 	admin.pool.volume.Resize \
 	admin.pool.volume.Revert \
+	admin.pool.volume.Set.ephemeral \
 	admin.pool.volume.Set.revisions_to_keep \
 	admin.pool.volume.Set.rw \
 	admin.pool.volume.Snapshot \
@@ -68,6 +70,11 @@ ADMIN_API_METHODS_SIMPLE = \
 	admin.vm.device.block.Detach \
 	admin.vm.device.block.List \
 	admin.vm.device.block.Set.persistent \
+	admin.vm.device.usb.Attach \
+	admin.vm.device.usb.Available \
+	admin.vm.device.usb.Detach \
+	admin.vm.device.usb.List \
+	admin.vm.device.usb.Set.persistent \
 	admin.vm.device.mic.Attach \
 	admin.vm.device.mic.Available \
 	admin.vm.device.mic.Detach \
@@ -106,6 +113,7 @@ ADMIN_API_METHODS_SIMPLE = \
 	admin.vm.volume.ListSnapshots \
 	admin.vm.volume.Resize \
 	admin.vm.volume.Revert \
+	admin.vm.volume.Set.ephemeral \
 	admin.vm.volume.Set.revisions_to_keep \
 	admin.vm.volume.Set.rw \
 	admin.vm.Stats \
@@ -158,13 +166,13 @@ ifeq ($(OS),Linux)
 	$(MAKE) install -C linux/system-config
 endif
 	$(PYTHON) setup.py install -O1 --skip-build --root $(DESTDIR)
-	ln -s qvm-device $(DESTDIR)/usr/bin/qvm-block
-	ln -s qvm-device $(DESTDIR)/usr/bin/qvm-pci
-	ln -s qvm-device $(DESTDIR)/usr/bin/qvm-usb
+	ln -sf qvm-device $(DESTDIR)/usr/bin/qvm-block
+	ln -sf qvm-device $(DESTDIR)/usr/bin/qvm-pci
+	ln -sf qvm-device $(DESTDIR)/usr/bin/qvm-usb
 	install -d $(DESTDIR)/usr/share/man/man1
-	ln -s qvm-device.1.gz $(DESTDIR)/usr/share/man/man1/qvm-block.1.gz
-	ln -s qvm-device.1.gz $(DESTDIR)/usr/share/man/man1/qvm-pci.1.gz
-	ln -s qvm-device.1.gz $(DESTDIR)/usr/share/man/man1/qvm-usb.1.gz
+	ln -sf qvm-device.1.gz $(DESTDIR)/usr/share/man/man1/qvm-block.1.gz
+	ln -sf qvm-device.1.gz $(DESTDIR)/usr/share/man/man1/qvm-pci.1.gz
+	ln -sf qvm-device.1.gz $(DESTDIR)/usr/share/man/man1/qvm-usb.1.gz
 	$(MAKE) install -C relaxng
 	mkdir -p $(DESTDIR)/etc/qubes
 ifeq ($(BACKEND_VMM),xen)
@@ -189,11 +197,11 @@ endif
 	install -m 0755 qvm-tools/qvm-sync-clock $(DESTDIR)/usr/bin/qvm-sync-clock
 	install -m 0755 qvm-tools/qvm-console-dispvm $(DESTDIR)/usr/bin/qvm-console-dispvm
 	for method in $(ADMIN_API_METHODS_SIMPLE); do \
-		ln -s ../../var/run/qubesd.sock \
+		ln -sf ../../var/run/qubesd.sock \
 			$(DESTDIR)/etc/qubes-rpc/$$method || exit 1; \
 	done
 	install qubes-rpc/admin.vm.volume.Import $(DESTDIR)/etc/qubes-rpc/
-	ln -s admin.vm.volume.Import $(DESTDIR)/etc/qubes-rpc/admin.vm.volume.ImportWithSize
+	ln -sf admin.vm.volume.Import $(DESTDIR)/etc/qubes-rpc/admin.vm.volume.ImportWithSize
 	install qubes-rpc/admin.vm.Console $(DESTDIR)/etc/qubes-rpc/
 	PYTHONPATH=.:test-packages qubes-rpc-policy/generate-admin-policy \
 		--dest=$(DESTDIR)/etc/qubes/policy.d/90-admin-default.policy \
@@ -214,6 +222,7 @@ endif
 
 	mkdir -p "$(DESTDIR)$(FILESDIR)"
 	cp -r templates "$(DESTDIR)$(FILESDIR)/templates"
+	cp -r tests-data "$(DESTDIR)$(FILESDIR)/tests-data"
 	rm -f "$(DESTDIR)$(FILESDIR)/templates/README"
 
 	mkdir -p "$(DESTDIR)$(DOCDIR)"

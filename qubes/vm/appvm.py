@@ -102,6 +102,14 @@ class AppVM(qubes.vm.mix.dvmtemplate.DVMTemplateMixin,
 
         super().__init__(app, xml, **kwargs)
 
+    @qubes.stateless_property
+    def icon(self):
+        if self.template_for_dispvms:
+            return 'templatevm-' + self.label.name
+        # multi-inheritance and properties confuses pylint here
+        # pylint: disable=no-member
+        return super().icon
+
     @qubes.events.handler('domain-load')
     def on_domain_loaded(self, event):
         ''' When domain is loaded assert that this vm has a template.
@@ -111,7 +119,7 @@ class AppVM(qubes.vm.mix.dvmtemplate.DVMTemplateMixin,
     @qubes.events.handler('property-pre-reset:template')
     def on_property_pre_reset_template(self, event, name, oldvalue=None):
         '''Forbid deleting template of running VM
-        '''  # pylint: disable=unused-argument,no-self-use
+        '''  # pylint: disable=unused-argument
         raise qubes.exc.QubesValueError('Cannot unset template')
 
     @qubes.events.handler('property-pre-set:template')

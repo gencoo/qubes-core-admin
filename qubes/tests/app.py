@@ -377,7 +377,7 @@ class TC_89_QubesEmpty(qubes.tests.QubesTestCase):
 
     @qubes.tests.skipUnlessDom0
     def test_000_init_empty(self):
-        # pylint: disable=no-self-use,unused-variable,bare-except
+        # pylint: disable=unused-variable,bare-except
         try:
             os.unlink('/tmp/qubestest.xml')
         except FileNotFoundError:
@@ -564,6 +564,7 @@ class TC_90_Qubes(qubes.tests.QubesTestCase):
         super(TC_90_Qubes, self).setUp()
         self.app = qubes.Qubes('/tmp/qubestest.xml', load=False,
                                offline_mode=True)
+        self.app.default_kernel = 'dummy'
         self.addCleanup(self.cleanup_qubes)
         self.app.load_initial_values()
         self.template = self.app.add_new_vm('TemplateVM', name='test-template',

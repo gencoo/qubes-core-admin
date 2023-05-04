@@ -22,9 +22,11 @@
 
 ''' This module contains pool implementations backed by file images'''
 import asyncio
+import errno
 import os
 import os.path
 import re
+import stat
 import subprocess
 from contextlib import suppress
 
@@ -32,12 +34,48 @@ import qubes.storage
 import qubes.utils
 
 BLKSIZE = 512
+CREATE_SCRIPT = '/usr/lib/qubes/create-snapshot'
+DESTROY_SCRIPT = '/usr/lib/qubes/destroy-snapshot'
 
-# 256 KiB chunk, same as in block-snapshot script. Header created by
+# 256 KiB chunk, same as in create-snapshot script. Header created by
 # struct.pack('<4I', 0x70416e53, 1, 1, 256) mimicking write_header()
 # in linux/drivers/md/dm-snap-persistent.c
 EMPTY_SNAPSHOT = b'SnAp\x01\x00\x00\x00\x01\x00\x00\x00\x00\x01\x00\x00' \
                  + bytes(262128)
+
+def _dev_path(file):
+    res = os.stat(file)
+    assert stat.S_ISREG(res.st_mode), 'not a regular file?'
+    return '%x:%d' % (res.st_dev, res.st_ino)
+
+_lock = asyncio.Lock()
+
+
+def bytes_used(fobject):
+    """Return bytes used by a file, taking sparseness into account.
+
+    Non-zero byte size is not synonymous with presence of data.
+    """
+    return os.fstat(fobject.fileno()).st_blocks * BLKSIZE
+
+
+def has_any_data(fobject):
+    """Return True if the file has any non-hole data, False otherwise."""
+    pos = fobject.tell()
+    try:
+        # Move file pointer to the beginning of the next data byte.
+        fobject.seek(0, os.SEEK_DATA)
+        # There was a data byte -> the file is non-empty.
+        return True
+    except OSError as e:
+        if e.errno == errno.ENXIO:
+            # The file was completely empty (zero bytes or 100% sparse).
+            return False
+        # Oh noes!
+        raise
+    finally:
+        # Restore the position of the file to preserve the invariant.
+        fobject.seek(pos, 0)
 
 
 class FilePool(qubes.storage.Pool):
@@ -59,8 +97,10 @@ class FilePool(qubes.storage.Pool):
     '''  # pylint: disable=protected-access
     driver = 'file'
 
-    def __init__(self, *, name, revisions_to_keep=1, dir_path):
-        super().__init__(name=name, revisions_to_keep=revisions_to_keep)
+    def __init__(self, *, name, revisions_to_keep=1, dir_path,
+                 ephemeral_volatile=False):
+        super().__init__(name=name, revisions_to_keep=revisions_to_keep,
+                         ephemeral_volatile=ephemeral_volatile)
         self.dir_path = os.path.normpath(dir_path)
         self._volumes = []
 
@@ -70,7 +110,8 @@ class FilePool(qubes.storage.Pool):
             'name': self.name,
             'dir_path': self.dir_path,
             'driver': FilePool.driver,
-            'revisions_to_keep': self.revisions_to_keep
+            'revisions_to_keep': self.revisions_to_keep,
+            'ephemeral_volatile': self.ephemeral_volatile,
         }
 
     def init_volume(self, vm, volume_config):
@@ -98,6 +139,18 @@ class FilePool(qubes.storage.Pool):
         self._volumes += [volume]
         return volume
 
+    @staticmethod
+    def check_block_dev_exists(path):
+        """
+        Check if a block device exists
+        """
+        try:
+            stat_result = os.stat(path)
+        except FileNotFoundError:
+            return False
+        assert stat.S_ISBLK(stat_result.st_mode), "not a block device?"
+        return True
+
     @property
     def revisions_to_keep(self):
         return self._revisions_to_keep
@@ -110,10 +163,10 @@ class FilePool(qubes.storage.Pool):
                 'FilePool supports maximum 1 volume revision to keep')
         self._revisions_to_keep = value
 
-    def destroy(self):
+    async def destroy(self):
         pass
 
-    def setup(self):
+    def setup(self):  # pylint: disable=invalid-overridden-method
         create_dir_if_not_exists(self.dir_path)
         appvms_path = os.path.join(self.dir_path, 'appvms')
         create_dir_if_not_exists(appvms_path)
@@ -202,18 +255,28 @@ class FileVolume(qubes.storage.Volume):
 
     @revisions_to_keep.setter
     def revisions_to_keep(self, value):
-        if int(value) > 1:
+        if not isinstance(value, int) or value > 1 or value < 0:
             raise NotImplementedError(
                 'FileVolume supports maximum 1 volume revision to keep')
-        self._revisions_to_keep = int(value)
+        self._revisions_to_keep = value
 
-    def create(self):
+    def create(self):  # pylint: disable=invalid-overridden-method
         assert isinstance(self.size, int) and self.size > 0, \
             'Volume size must be > 0'
         if not self.snap_on_start:
             create_sparse_file(self.path, self.size, permissions=0o664)
 
-    def remove(self):
+    async def _destroy_blockdev(self):
+        async with _lock:
+            path = self._block_device_path()
+            if os.path.exists(path):
+                await qubes.utils.run_program(DESTROY_SCRIPT,
+                        path, sudo=True)
+
+    async def remove(self):
+        with suppress(ValueError):
+            self.pool._volumes.remove(self)  # pylint: disable=protected-access
+        await self.stop()
         if not self.snap_on_start:
             _remove_if_exists(self.path)
         if self.snap_on_start or self.save_on_stop:
@@ -226,20 +289,56 @@ class FileVolume(qubes.storage.Volume):
     def is_dirty(self):
         if self.save_on_stop:
             with suppress(FileNotFoundError), open(self.path_cow, 'rb') as cow:
-                cow_used = os.fstat(cow.fileno()).st_blocks * BLKSIZE
-                return (cow_used > 0 and
+                # The bytes used on disk does not determine whether a
+                # file actually has any data.  In ZFS, for example,
+                # a completely empty file (textbook 100% sparse, or even
+                # zero-byte-length) will still occupy at least one block.
+                # Thus, below, the function has_any_data() is used to
+                # determine if the copy-on-write file has any data.
+                cow_used = bytes_used(cow)
+                return (has_any_data(cow) and
                         (cow_used > len(EMPTY_SNAPSHOT) or
                          cow.read(len(EMPTY_SNAPSHOT)) != EMPTY_SNAPSHOT or
                          cow_used > cow.seek(0, os.SEEK_HOLE)))
         return False
 
-    def resize(self, size):
+    def _resize_snapshot_dev(self, size):
+        path = self._block_device_path()
+        # read old table:
+        dm_table = subprocess.check_output(['dmsetup', 'table', path])
+        assert dm_table.count(b'\n') == 1
+        dm_table_parts = dm_table.decode().split(' ')
+        assert dm_table_parts[0] == '0'
+        # Kernel docs say:
+        # > When loading or unloading the snapshot target, the corresponding
+        # > snapshot-origin or snapshot-merge target must be suspended.
+        # > A failure to suspend the origin target could result in data
+        # > corruption.
+        # This doesn't apply to loading snapshot-origin target itself.
+        # Beware if ever adding resize of 'snapshot' target.
+        assert dm_table_parts[2] == 'snapshot-origin'
+        # replace the size
+        dm_table_parts[1] = str(size // 512)
+        dm_table = ' '.join(dm_table_parts)
+        # load new table
+        subprocess.check_call(['dmsetup', 'load', '--table=' + dm_table, path])
+        # and make it active
+        subprocess.check_call(['dmsetup', 'resume', path])
+
+    def resize(self, size):  # pylint: disable=invalid-overridden-method
         ''' Expands volume, throws
             :py:class:`qubst.storage.qubes.storage.StoragePoolException` if
             given size is less than current_size
-        '''  # pylint: disable=no-self-use
+        '''
         if not self.rw:
-            msg = 'Can not resize reađonly volume {!s}'.format(self)
+            msg = 'Can not resize readonly volume {!s}'.format(self)
+            raise qubes.storage.StoragePoolException(msg)
+
+        if self.snap_on_start:
+            # this theoretically could be supported, but it's unusual
+            # enough to not worth the effort
+            msg = 'Cannot resize volume based on a template - resize' \
+                  'the template instead'
             raise qubes.storage.StoragePoolException(msg)
 
         if size < self.size:
@@ -252,17 +351,20 @@ class FileVolume(qubes.storage.Volume):
         with open(self.path, 'a+b') as fd:
             fd.truncate(size)
 
-        p = subprocess.Popen(['losetup', '--associated', self.path],
-                             stdout=subprocess.PIPE)
-        result = p.communicate()
+        with subprocess.Popen(['losetup', '--associated', self.path],
+                              stdout=subprocess.PIPE) as p:
+            result = p.communicate()
 
-        m = re.match(r'^(/dev/loop\d+):\s', result[0].decode())
+        m = re.match(r'\A(/dev/loop\d+):\s', result[0].decode())
         if m is not None:
             loop_dev = m.group(1)
 
             # resize loop device
             subprocess.check_call(['losetup', '--set-capacity',
                                    loop_dev])
+            if self.save_on_stop:
+                self._resize_snapshot_dev(size)
+
         self._size = size
 
     def commit(self):
@@ -279,7 +381,7 @@ class FileVolume(qubes.storage.Volume):
         create_sparse_file(self.path_cow, self.size)
         return self
 
-    def export(self):
+    def export(self):  # pylint: disable=invalid-overridden-method
         if self._export_lock is not None:
             assert self._export_lock is FileVolume._marker_running, \
                 'nested calls to export()'
@@ -291,27 +393,26 @@ class FileVolume(qubes.storage.Volume):
         self._export_lock = FileVolume._marker_exported
         return self.path
 
-    def export_end(self, path):
+    async def export_end(self, path):
         assert self._export_lock is not FileVolume._marker_running, \
             'ending an export on a running volume?'
         self._export_lock = None
 
-    @asyncio.coroutine
-    def import_volume(self, src_volume):
+    async def import_volume(self, src_volume):
         if src_volume.snap_on_start:
             raise qubes.storage.StoragePoolException(
                 "Can not import snapshot volume {!s} in to pool {!s} ".format(
                     src_volume, self))
         if self.save_on_stop:
             _remove_if_exists(self.path)
-            path = yield from qubes.utils.coro_maybe(src_volume.export())
+            path = await qubes.utils.coro_maybe(src_volume.export())
             try:
                 copy_file(path, self.path)
             finally:
-                yield from qubes.utils.coro_maybe(src_volume.export_end(path))
+                await qubes.utils.coro_maybe(src_volume.export_end(path))
         return self
 
-    def import_data(self, size):
+    def import_data(self, size):  # pylint: disable=invalid-overridden-method
         if not self.save_on_stop:
             raise qubes.storage.StoragePoolException(
                 "Can not import into save_on_stop=False volume {!s}".format(
@@ -319,7 +420,7 @@ class FileVolume(qubes.storage.Volume):
         create_sparse_file(self.path_import, size)
         return self.path_import
 
-    def import_data_end(self, success):
+    def import_data_end(self, success):  # pylint: disable=invalid-overridden-method
         if success:
             os.rename(self.path_import, self.path)
         else:
@@ -337,7 +438,7 @@ class FileVolume(qubes.storage.Volume):
         create_sparse_file(self.path, self.size)
         return self
 
-    def start(self):
+    async def start(self):
         if self._export_lock is not None:
             assert self._export_lock is FileVolume._marker_exported, \
                 'nested calls to start()'
@@ -346,25 +447,45 @@ class FileVolume(qubes.storage.Volume):
         self._export_lock = FileVolume._marker_running
         if not self.save_on_stop and not self.snap_on_start:
             self.reset()
-        else:
-            if not self.save_on_stop:
-                # make sure previous snapshot is removed - even if VM
-                # shutdown routine wasn't called (power interrupt or so)
-                _remove_if_exists(self.path_cow)
-            if not os.path.exists(self.path_cow):
-                create_sparse_file(self.path_cow, self.size)
-            if not self.snap_on_start:
-                _check_path(self.path)
-            if hasattr(self, 'path_source_cow'):
-                if not os.path.exists(self.path_source_cow):
-                    create_sparse_file(self.path_source_cow, self.size)
+            # so that we do not trip an assertion below
+            return self
+        if not self.save_on_stop:
+            # make sure previous snapshot is removed - even if VM
+            # shutdown routine wasn't called (power interrupt or so)
+            _remove_if_exists(self.path_cow)
+        if not os.path.exists(self.path_cow):
+            create_sparse_file(self.path_cow, self.size)
+        if not self.snap_on_start:
+            _check_path(self.path)
+        if hasattr(self, 'path_source_cow'):
+            if not os.path.exists(self.path_source_cow):
+                create_sparse_file(self.path_source_cow, self.size)
+
+        path = self._block_device_path()
+        assert path.startswith('/dev/mapper/'), 'bad path %r' % path
+        path = path[12:]
+        async with _lock:
+            if self.save_on_stop:
+                assert not self.snap_on_start, 'unsupported configuration'
+                await qubes.utils.run_program(CREATE_SCRIPT, path, self.path,
+                        self.path_cow, sudo=True)
+            elif self.snap_on_start:
+                assert self.path.endswith('.img')
+                assert self.path_source_cow == self.path[:-4] + '-cow.img'
+                await qubes.utils.run_program(CREATE_SCRIPT, path, self.path,
+                        self.path_source_cow, self.path_cow, sudo=True)
         return self
 
-    def stop(self):
+    async def stop(self):
         assert self._export_lock is not FileVolume._marker_exported, \
             'trying to stop exported file volume?'
+        if self.save_on_stop or self.snap_on_start:
+            await self._destroy_blockdev()
         if self.save_on_stop:
-            self.commit()
+            if self.rw:
+                self.commit()
+            else:
+                _remove_if_exists(self.path_cow)
         elif self.snap_on_start:
             _remove_if_exists(self.path_cow)
         else:
@@ -375,6 +496,7 @@ class FileVolume(qubes.storage.Volume):
     @property
     def path(self):
         if self.snap_on_start:
+            assert not self.save_on_stop
             return os.path.join(self.dir_path, self.source.vid + '.img')
         return os.path.join(self.dir_path, self.vid + '.img')
 
@@ -388,7 +510,7 @@ class FileVolume(qubes.storage.Volume):
         img_name = self.vid + '-import.img'
         return os.path.join(self.dir_path, img_name)
 
-    def verify(self):
+    def verify(self):  # pylint: disable=invalid-overridden-method
         ''' Verifies the volume. '''
         if not os.path.exists(self.path) and \
                 (self.snap_on_start or self.save_on_stop):
@@ -398,23 +520,29 @@ class FileVolume(qubes.storage.Volume):
 
     @property
     def script(self):
-        if not self.snap_on_start and not self.save_on_stop:
-            return None
-        if not self.snap_on_start and self.save_on_stop:
-            return 'block-origin'
-        if self.snap_on_start:
-            return 'block-snapshot'
-        return None
+        pass
+
+    def _block_device_path(self):
+        if not self.snap_on_start:
+            if not self.save_on_stop:
+                return self.path
+            return '-'.join([
+                '/dev/mapper/origin',
+                _dev_path(self.path),
+            ])
+        assert not self.save_on_stop, 'unsuppported configuration'
+        return '-'.join([
+            '/dev/mapper/snapshot',
+            _dev_path(self.path),
+            _dev_path(self.path_source_cow),
+            _dev_path(self.path_cow),
+        ])
 
     def block_device(self):
         ''' Return :py:class:`qubes.storage.BlockDevice` for serialization in
             the libvirt XML template as <disk>.
         '''
-        path = self.path
-        if self.snap_on_start:
-            path += ":" + self.path_source_cow
-        if self.snap_on_start or self.save_on_stop:
-            path += ":" + self.path_cow
+        path = self._block_device_path()
         return qubes.storage.BlockDevice(path, self.name, self.script, self.rw,
                                          self.domain, self.devtype)
 
@@ -428,8 +556,8 @@ class FileVolume(qubes.storage.Volume):
         if not os.path.exists(old_revision):
             return {}
 
-        seconds = os.path.getctime(old_revision)
-        iso_date = qubes.storage.isodate(seconds).split('.', 1)[0]
+        seconds = int(os.path.getctime(old_revision))
+        iso_date = qubes.storage.isodate(seconds)
         return {'old': iso_date}
 
     @property
@@ -437,11 +565,6 @@ class FileVolume(qubes.storage.Volume):
         with suppress(FileNotFoundError):
             self._size = os.path.getsize(self.path)
         return self._size
-
-    @size.setter
-    def size(self, _):
-        raise qubes.storage.StoragePoolException(
-            "You shouldn't use volume size setter, use resize method instead")
 
     @property
     def usage(self):
@@ -452,7 +575,6 @@ class FileVolume(qubes.storage.Volume):
         if self.save_on_stop or not self.snap_on_start:
             usage += get_disk_usage(self.path)
         return usage
-
 
 
 def create_sparse_file(path, size, permissions=None):
@@ -541,9 +663,10 @@ def copy_file(source, destination):
 
 def _remove_if_exists(path):
     ''' Removes a file if it exist, silently succeeds if file does not exist '''
-    if os.path.exists(path):
+    try:
         os.remove(path)
-
+    except FileNotFoundError:
+        pass
 
 def _check_path(path):
     ''' Raise an StoragePoolException if ``path`` does not exist'''

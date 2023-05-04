@@ -149,7 +149,7 @@ class TC_00_BackupCompatibility(
         subprocess.check_call(["/usr/sbin/mkfs.ext4", "-q", "-F", filename])
 
     def create_volatile_img(self, filename):
-        self.create_sparse(filename, 11.5*2**30)
+        self.create_sparse(filename, int(11.5*2**30))
         # here used to be sfdisk call with "0,1024,S\n,10240,L\n" input,
         # but since sfdisk folks like to change command arguments in
         # incompatible way, have an partition table verbatim here
@@ -292,7 +292,8 @@ class TC_00_BackupCompatibility(
         tar = subprocess.Popen(tar_cmdline, stdout=subprocess.PIPE)
         if encrypted:
             encryptor = subprocess.Popen(
-                ["openssl", "enc", "-e", "-aes-256-cbc", "-pass", "pass:qubes"],
+                ["openssl", "enc", "-e", "-aes-256-cbc",
+                 "-md", "MD5", "-pass", "pass:qubes"],
                 stdin=tar.stdout,
                 stdout=subprocess.PIPE)
             data = encryptor.stdout

@@ -17,17 +17,18 @@
 #
 # You should have received a copy of the GNU Lesser General Public
 # License along with this library; if not, see <https://www.gnu.org/licenses/>.
-import asyncio
+import re
 
 import qubes.ext
+
+_version_re = re.compile(r"[0-9]{1,3}\.[0-9]{1,3}")
 
 class CoreFeatures(qubes.ext.Extension):
     # pylint: disable=too-few-public-methods
     @qubes.ext.handler('features-request')
-    @asyncio.coroutine
-    def qubes_features_request(self, vm, event, untrusted_features):
+    async def qubes_features_request(self, vm, event, untrusted_features):
         '''Handle features provided by qubes-core-agent and qubes-gui-agent'''
-        # pylint: disable=no-self-use,unused-argument
+        # pylint: disable=unused-argument
         if getattr(vm, 'template', None):
             vm.log.warning(
                 'Ignoring qubes.NotifyTools for template-based VM')
@@ -39,6 +40,11 @@ class CoreFeatures(qubes.ext.Extension):
             untrusted_value = untrusted_features.get(feature, None)
             if untrusted_value in ('1', '0'):
                 requested_features[feature] = bool(int(untrusted_value))
+
+        if 'qubes-agent-version' in untrusted_features:
+            untrusted_value = untrusted_features['qubes-agent-version']
+            if _version_re.fullmatch(untrusted_value):
+                vm.features['qubes-agent-version'] = untrusted_value
         del untrusted_features
 
         # default user for qvm-run etc
@@ -61,9 +67,8 @@ class CoreFeatures(qubes.ext.Extension):
         if not qrexec_before and vm.features.get('qrexec', False):
             # if this is the first time qrexec was advertised, now can finish
             #  template setup
-            yield from vm.fire_event_async('template-postinstall')
+            await vm.fire_event_async('template-postinstall')
 
-    # pylint: disable=no-self-use
     def set_servicevm_feature(self, subject):
         if getattr(subject, 'provides_network', False):
             subject.features['servicevm'] = 1

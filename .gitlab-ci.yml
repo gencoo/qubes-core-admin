@@ -1,29 +1,42 @@
-include:
-  - project: 'QubesOS/qubes-continuous-integration'
-    file: '/r4.1/gitlab-base.yml'
-  - project: 'QubesOS/qubes-continuous-integration'
-    file: '/r4.1/gitlab-dom0.yml'
-
 checks:pylint:
-  stage: checks
   before_script:
-    - sudo dnf install -y python3-pip
-    - git clone https://github.com/QubesOS/qubes-core-qrexec ~/qubes-core-qrexec
-    - pip3 install --quiet -r ci/requirements.txt
+  - sudo dnf install -y python3-pip
+  - git clone https://github.com/QubesOS/qubes-core-qrexec ~/qubes-core-qrexec
+  - pip3 install --quiet -r ci/requirements.txt
   script:
-    - PYTHONPATH=test-packages:~/qubes-core-qrexec python3 -m pylint qubes
-
+  - PYTHONPATH=test-packages:~/qubes-core-qrexec python3 -m pylint qubes
+  stage: checks
 checks:tests:
+  after_script:
+  - ci/codecov-wrapper -F unittests
+  before_script:
+  - sudo dnf install -y lvm2 vim-common python3-lxml python3-docutils
+  - git clone https://github.com/QubesOS/qubes-core-qrexec ~/qubes-core-qrexec
+  - pip3 install --user --quiet -r ci/requirements.txt
+  - |
+      set -e
+      # Installing ZFS after the CI requirements so after_script codecov-wrapper does not explode if ZFS install fails.
+      kver=$(uname -r)
+      echo $kver is the running kernel >&2
+      sudo dnf install -y https://zfsonlinux.org/fedora/zfs-release-2-2$(rpm --eval "%{dist}").noarch.rpm
+      # We are now going to force the installation of the specific kernel-devel version
+      # that matches the current kernel.  If unavailable, the test should fail now.
+      # Ideally the VM image ships with a kernel-devel package that matches the
+      # booted kernel.
+      sudo dnf install -y zfs kernel-core-$kver kernel-devel-$kver
+      # Proactively load the kernel module with the right size ARC to prevent memory
+      # starvation during integration tests.  Otherwise the ARC will not reduce
+      # itself unless there's memory pressure, and the system will fail to request
+      # memory from qmemman since qmemman will not see enough memory to run.
+      sudo modprobe zfs zfs_arc_max=67108864
+  script:
+  - PYTHONPATH=test-packages:~/qubes-core-qrexec ./run-tests
   stage: checks
   tags:
-    - short-living-job
-    - vm-runner
-  before_script:
-    # vim-common for xxd
-    - sudo dnf install -y lvm2 vim-common python3-lxml python3-docutils
-    - git clone https://github.com/QubesOS/qubes-core-qrexec ~/qubes-core-qrexec
-    - pip3 install --user --quiet -r ci/requirements.txt
-  script:
-    - PYTHONPATH=test-packages:~/qubes-core-qrexec ./run-tests
-  after_script:
-    - ci/codecov-wrapper -F unittests
+  - short-living-job
+  - vm-runner
+include:
+- file: /r4.2/gitlab-base.yml
+  project: QubesOS/qubes-continuous-integration
+- file: /r4.2/gitlab-host.yml
+  project: QubesOS/qubes-continuous-integration

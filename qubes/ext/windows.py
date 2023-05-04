@@ -17,7 +17,6 @@
 #
 # You should have received a copy of the GNU General Public License along
 # with this program; if not, see <http://www.gnu.org/licenses/>.
-import asyncio
 
 import qubes.ext
 import qubes.utils
@@ -27,7 +26,7 @@ class WindowsFeatures(qubes.ext.Extension):
     @qubes.ext.handler('features-request')
     def qubes_features_request(self, vm, event, untrusted_features):
         '''Handle features provided requested by Qubes Windows Tools'''
-        # pylint: disable=no-self-use,unused-argument
+        # pylint: disable=unused-argument
         if getattr(vm, 'template', None):
             vm.log.warning(
                 'Ignoring qubes.NotifyTools for template-based VM')
@@ -50,11 +49,21 @@ class WindowsFeatures(qubes.ext.Extension):
             vm.features['os'] = guest_os
         if guest_os == 'Windows' and qrexec:
             vm.features['rpc-clipboard'] = True
+            setattr(vm, 'maxmem', 0)
+            setattr(vm, 'qrexec_timeout', 6000)
+            if vm.features.check_with_template('stubdom-qrexec', None) is None:
+                vm.features['stubdom-qrexec'] = True
+            if vm.features.check_with_template('audio-model', None) is None:
+                vm.features['audio-model'] = 'ich6'
+            if vm.features.check_with_template('timezone', None) is None:
+                vm.features['timezone'] = 'localtime'
+            if vm.features.check_with_template('no-monitor-layout',
+                                               None) is None:
+                vm.features['no-monitor-layout'] = True
 
     @qubes.ext.handler('domain-create-on-disk')
-    @asyncio.coroutine
-    def on_domain_create_on_disk(self, vm, _event, **kwargs):
-        # pylint: disable=no-self-use,unused-argument
+    async def on_domain_create_on_disk(self, vm, _event, **kwargs):
+        # pylint: disable=unused-argument
         if getattr(vm, 'template', None) is None:
             # handle only template-based vms
             return
@@ -68,6 +77,6 @@ class WindowsFeatures(qubes.ext.Extension):
             # until windows tools get ability to prepare private.img on its own,
             # copy one from the template
             vm.log.info('Windows template - cloning private volume')
-            yield from qubes.utils.coro_maybe(
+            await qubes.utils.coro_maybe(
                 vm.volumes['private'].import_volume(
                     template.volumes['private']))

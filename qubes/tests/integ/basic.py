@@ -391,6 +391,8 @@ class TC_03_QvmRevertTemplateChanges(qubes.tests.SystemTestCase):
 
     def setUp(self):
         super(TC_03_QvmRevertTemplateChanges, self).setUp()
+        if self.app.default_pool.driver == 'file':
+            self.skipTest('file pool does not support reverting')
         self.init_default_template()
 
     def cleanup_template(self):
@@ -485,13 +487,14 @@ class TC_30_Gui_daemon(qubes.tests.SystemTestCase):
             'zenity --text-info --editable --title={}'.format(window_title)))
 
         self.wait_for_window(window_title)
-        time.sleep(0.5)
+        self.loop.run_until_complete(asyncio.sleep(5))
         test_string = "test{}".format(testvm1.xid)
 
         # Type and copy some text
         subprocess.check_call(['xdotool', 'search', '--name', window_title,
                                'windowactivate', '--sync',
                                'type', test_string])
+        self.loop.run_until_complete(asyncio.sleep(5))
         # second xdotool call because type --terminator do not work (SEGV)
         # additionally do not use search here, so window stack will be empty
         # and xdotool will use XTEST instead of generating events manually -
@@ -500,6 +503,8 @@ class TC_30_Gui_daemon(qubes.tests.SystemTestCase):
         subprocess.check_call(['xdotool',
                                'key', 'ctrl+a', 'ctrl+c', 'ctrl+shift+c',
                                'Escape'])
+
+        self.wait_for_window(window_title, show=False)
 
         clipboard_content = \
             open('/var/run/qubes/qubes-clipboard.bin', 'r').read().strip()

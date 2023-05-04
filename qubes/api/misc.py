@@ -21,8 +21,8 @@
 ''' Interface for methods not being part of Admin API, but still handled by
 qubesd. '''
 
-import asyncio
 import string
+from datetime import datetime
 
 import qubes.api
 import qubes.api.admin
@@ -33,8 +33,7 @@ class QubesMiscAPI(qubes.api.AbstractQubesAPI):
     SOCKNAME = '/var/run/qubesd.misc.sock'
 
     @qubes.api.method('qubes.FeaturesRequest', no_payload=True)
-    @asyncio.coroutine
-    def qubes_features_request(self):
+    async def qubes_features_request(self):
         ''' qubes.FeaturesRequest handler
 
         VM (mostly templates) can request some features from dom0 for itself.
@@ -56,18 +55,17 @@ class QubesMiscAPI(qubes.api.AbstractQubesAPI):
             self.src.untrusted_qdb.read(key).decode('ascii', errors='strict')
                 for key in keys}
 
-        safe_set = string.ascii_letters + string.digits
+        safe_set = string.ascii_letters + string.digits + '-._'
         for untrusted_key in untrusted_features:
             untrusted_value = untrusted_features[untrusted_key]
             self.enforce(all((c in safe_set) for c in untrusted_value))
 
-        yield from self.src.fire_event_async('features-request',
+        await self.src.fire_event_async('features-request',
             untrusted_features=untrusted_features)
         self.app.save()
 
     @qubes.api.method('qubes.NotifyTools', no_payload=True)
-    @asyncio.coroutine
-    def qubes_notify_tools(self):
+    async def qubes_notify_tools(self):
         '''
         Legacy version of qubes.FeaturesRequest, used by Qubes Windows Tools
         '''
@@ -88,13 +86,12 @@ class QubesMiscAPI(qubes.api.AbstractQubesAPI):
                 untrusted_features[feature] = untrusted_value
             del untrusted_value
 
-        yield from self.src.fire_event_async('features-request',
+        await self.src.fire_event_async('features-request',
             untrusted_features=untrusted_features)
         self.app.save()
 
     @qubes.api.method('qubes.NotifyUpdates')
-    @asyncio.coroutine
-    def qubes_notify_updates(self, untrusted_payload):
+    async def qubes_notify_updates(self, untrusted_payload):
         '''
         Receive VM notification about updates availability
 
@@ -116,7 +113,7 @@ class QubesMiscAPI(qubes.api.AbstractQubesAPI):
 
         if self.src.updateable:
             # Just trust information from VM itself
-            self.src.features['updates-available'] = bool(update_count)
+            self._feature_of_update(self.src, bool(update_count))
             self.app.save()
         elif updateable_template is not None:
             # Hint about updates availability in template
@@ -129,6 +126,14 @@ class QubesMiscAPI(qubes.api.AbstractQubesAPI):
                 # in the template - ignore info
                 if self.src.storage.outdated_volumes:
                     return
-                updateable_template.features['updates-available'] = bool(
-                    update_count)
+                self._feature_of_update(updateable_template, bool(update_count))
                 self.app.save()
+
+    @staticmethod
+    def _feature_of_update(qube, new_updates_available):
+        current_date = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
+        old_updates_available = qube.features.get('updates-available', False)
+        if old_updates_available and not new_updates_available:
+            qube.features['last-update'] = current_date
+        qube.features['updates-available'] = new_updates_available
+        qube.features['last-updates-check'] = current_date

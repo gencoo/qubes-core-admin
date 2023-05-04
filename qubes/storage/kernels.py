@@ -85,23 +85,24 @@ class LinuxModules(Volume):
     def is_dirty(self):
         return False
 
-    def import_volume(self, src_volume):
+    async def import_volume(self, src_volume):
         if isinstance(src_volume, LinuxModules):
             # do nothing
             return self
         raise StoragePoolException('clone of LinuxModules volume from '
                                   'different volume type is not supported')
 
-    def create(self):
+    async def create(self):
         return self
 
-    def remove(self):
+    @property
+    def ephemeral(self):
+        return False
+
+    async def remove(self):
         pass
 
-    def commit(self):
-        return self
-
-    def export(self):
+    async def export(self):
         return self.path
 
     def is_outdated(self):
@@ -113,7 +114,6 @@ class LinuxModules(Volume):
 
     @revisions_to_keep.setter
     def revisions_to_keep(self, value):
-        # pylint: disable=no-self-use
         if value:
             raise qubes.exc.QubesValueError(
                 'LinuxModules supports only revisions_to_keep=0')
@@ -124,18 +124,17 @@ class LinuxModules(Volume):
 
     @rw.setter
     def rw(self, value):
-        # pylint: disable=no-self-use
         if value:
             raise qubes.exc.QubesValueError(
                 'LinuxModules supports only read-only volumes')
 
-    def start(self):
+    async def start(self):
         return self
 
-    def stop(self):
+    async def stop(self):
         pass
 
-    def verify(self):
+    def verify(self):  # pylint: disable=invalid-overridden-method
         if self.vid:
             _check_path(self.vmlinuz)
           #  _check_path(self.initramfs)
@@ -182,13 +181,13 @@ class LinuxKernel(Pool):
             'driver': LinuxKernel.driver,
         }
 
-    def destroy(self):
+    async def destroy(self):
         pass
 
-    def import_volume(self, dst_pool, dst_volume, src_pool, src_volume):
+    async def import_volume(self, dst_pool, dst_volume, src_pool, src_volume):
         pass
 
-    def setup(self):
+    async def setup(self):
         pass
 
     @property
@@ -197,7 +196,6 @@ class LinuxKernel(Pool):
 
     @revisions_to_keep.setter
     def revisions_to_keep(self, value):
-        # pylint: disable=no-self-use
         if value:
             raise qubes.exc.QubesValueError(
                 'LinuxKernel supports only revisions_to_keep=0')

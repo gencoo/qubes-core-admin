@@ -28,7 +28,7 @@ import qubes.exc
 
 
 class GUI(qubes.ext.Extension):
-    # pylint: disable=too-few-public-methods,unused-argument,no-self-use
+    # pylint: disable=too-few-public-methods,unused-argument
     @staticmethod
     def attached_vms(vm):
         for domain in vm.app.domains:
@@ -97,7 +97,7 @@ class GUI(qubes.ext.Extension):
 
         # Set GuiVM prefix
         guivm_windows_prefix = vm.features.get('guivm-windows-prefix', 'GuiVM')
-        if vm.features.get('service.guivm-gui-agent', None):
+        if vm.features.get('service.guivm', None):
             vm.untrusted_qdb.write('/guivm-windows-prefix',
                                    guivm_windows_prefix)
 
@@ -111,16 +111,15 @@ class GUI(qubes.ext.Extension):
                               oldvalue=oldvalue)
 
     @qubes.ext.handler('domain-start')
-    @asyncio.coroutine
-    def on_domain_start(self, vm, event, **kwargs):
+    async def on_domain_start(self, vm, event, **kwargs):
         attached_vms = [domain for domain in self.attached_vms(vm) if
                         domain.is_running()]
         for attached_vm in attached_vms:
             attached_vm.untrusted_qdb.write('/qubes-gui-domain-xid',
                                             str(vm.xid))
         if vm.features.get('input-dom0-proxy', None):
-            yield from asyncio.create_subprocess_exec(
-                '/usr/bin/qubes-input-trigger --all --dom0')
+            await asyncio.create_subprocess_exec(
+                '/usr/bin/qubes-input-trigger', '--all', '--dom0')
 
     @qubes.ext.handler('property-reset:keyboard_layout')
     def on_keyboard_reset(self, vm, event, name, oldvalue=None):
@@ -140,3 +139,14 @@ class GUI(qubes.ext.Extension):
 
         if vm.is_running():
             vm.untrusted_qdb.write('/keyboard-layout', newvalue)
+
+    @qubes.ext.handler('domain-tag-add:created-by-*')
+    def set_guivm_on_created_by(self, vm, event, tag, **kwargs):
+        '''Set GuiVM based on 'tag-created-vm-with' and 'set-created-guivm'
+           features
+        '''
+        # pylint: disable=unused-argument
+        created_by = vm.app.domains[tag.partition('created-by-')[2]]
+        if created_by.features.get('set-created-guivm', None):
+            guivm = vm.app.domains[created_by.features['set-created-guivm']]
+            vm.guivm = guivm

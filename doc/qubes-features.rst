@@ -183,11 +183,24 @@ Services and features can be then inspected from dom0 using
    $ qvm-features my-qube
    supported-service.my-service  1
 
+VM config and passing configuration values to VMs
+-------------------------------------------------
+
+Features that are prefixed with ``vm-config.`` are accessible via qubes-db
+from inside the qube. This is an easy way to pass certain information from
+dom0/gui domain tools to the inside of the qube.
+To read a ``vm-config.feature_name`` feature, use:
+
+.. code-block:: shell
+
+   $ qubesdb-read /vm-config/feature_name
+   value
+
 
 Announcing supported features
 ------------------------------
 
-For non-service features, there is similar announce mechanis to the above, but
+For non-service features, there is similar announce mechanism to the above, but
 uses ``supported-feature.`` prefix. It works like this:
 
 1. The TemplateVM (or StandaloneVM) announces
@@ -206,6 +219,27 @@ advertised to enable it. In fact, many features does not need any support from
 the VM side, so they will work without matching ``supported-feature.`` entry.
 Whether a feature requires VM-side support, is documented on case-by-case basis
 in `qvm-features` tool manual page.
+
+Announcing supported RPC services
+----------------------------------
+
+Each VM (including templates) can also announce supported RPC services. This is
+done similar to features and qvm-services as explained above, but with
+``supported-rpc.`` prefix. Template-based VM announce only services installed
+in its private image (so ``/usr/local/etc/qubes-rpc`` in Linux). To get all RPC
+services supported by a given template-based VM, one needs to look at both its
+template and the VM itself.
+
+Supported RPC services can be inspected from dom0 using :program:`qvm-features`
+tool, for example:
+
+.. code-block:: shell
+
+   $ qvm-features my-template
+   ...
+   supported-rpc.qubes.Gpg  1
+   ...
+
 
 Module contents
 ---------------

@@ -70,12 +70,12 @@ def fetch_ticket_info(app, number):
     :raises: urllib.error.HTTPError
     """
 
-    response = urllib.request.urlopen(urllib.request.Request(
-        app.config.ticket_base_uri.format(number=number),
-        headers={
-            'Accept': 'application/vnd.github.v3+json',
-            'User-agent': __name__}))
-    return GithubTicket(json.load(response))
+    with urllib.request.urlopen(urllib.request.Request(
+            app.config.ticket_base_uri.format(number=number),
+            headers={
+                'Accept': 'application/vnd.github.v3+json',
+                'User-agent': __name__})) as response:
+        return GithubTicket(json.load(response))
 
 
 def ticket(name, rawtext, text, lineno, inliner, options=None, content=None):
@@ -236,7 +236,6 @@ class OptionsCheckVisitor(docutils.nodes.SparseNodeVisitor):
 
     def visit_desc(self, node):
         """ Skips all but 'option' elements """
-        # pylint: disable=no-self-use
         if not node.get('desctype', None) == 'option':
             raise docutils.nodes.SkipChildren
 
@@ -287,7 +286,6 @@ class CommandCheckVisitor(docutils.nodes.SparseNodeVisitor):
             Uses :py:class:`OptionsCheckVisitor` for checking
             sub-commands options
         """
-        # pylint: disable=no-self-use
         title = str(node[0][0])
         if title.upper() == SUBCOMMANDS_TITLE:
             return
@@ -446,6 +444,7 @@ def parse_event(env, sig, signode):
 def break_to_pdb(app, *_dummy):
     if not app.config.break_to_pdb:
         return
+    # pylint: disable=forgotten-debug-statement
     import pdb
     pdb.set_trace()
 

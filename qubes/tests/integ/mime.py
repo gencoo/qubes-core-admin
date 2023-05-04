@@ -65,12 +65,9 @@ class TC_50_MimeHandlers:
         self.target_vm.template_for_dispvms = True
         self.source_vm.default_dispvm = self.target_vm
 
-        done, not_done = self.loop.run_until_complete(asyncio.gather(
+        self.loop.run_until_complete(asyncio.gather(
             self.source_vm.start(),
             self.target_vm.start()))
-        for result in itertools.chain(done, not_done):
-            # catch any exceptions
-            result.result()
 
 
     def get_window_class(self, winid, dispvm=False):
@@ -188,7 +185,7 @@ class TC_50_MimeHandlers:
 
     def prepare_pdf(self, filename):
         self.prepare_txt("/tmp/source.txt")
-        cmd = "convert text:/tmp/source.txt {}".format(filename)
+        cmd = "gm convert text:/tmp/source.txt {}".format(filename)
         try:
             self.loop.run_until_complete(
                 self.source_vm.run_for_stdio(cmd))
@@ -221,33 +218,34 @@ class TC_50_MimeHandlers:
 
     def prepare_png(self, filename):
         self.prepare_txt("/tmp/source.txt")
-        cmd = "convert text:/tmp/source.txt {}".format(filename)
+        cmd = "gm convert text:/tmp/source.txt {}".format(filename)
         try:
             self.loop.run_until_complete(
                 self.source_vm.run_for_stdio(cmd))
         except subprocess.CalledProcessError as e:
             if e.returncode == 127:
-                self.skipTest("convert not installed".format(cmd))
+                self.skipTest("GraphicsMagick not installed".format(cmd))
             self.skipTest("Failed to run '{}': {}".format(cmd,
                 e.stderr.decode()))
 
     def prepare_jpg(self, filename):
         self.prepare_txt("/tmp/source.txt")
-        cmd = "convert text:/tmp/source.txt {}".format(filename)
+        cmd = "gm convert text:/tmp/source.txt {}".format(filename)
         try:
             self.loop.run_until_complete(
                 self.source_vm.run_for_stdio(cmd))
         except subprocess.CalledProcessError as e:
             if e.returncode == 127:
-                self.skipTest("convert not installed".format(cmd))
+                self.skipTest("GraphicsMagick not installed".format(cmd))
             self.skipTest("Failed to run '{}': {}".format(cmd,
                 e.stderr.decode()))
 
     def test_000_txt(self):
         filename = "/home/user/test_file.txt"
         self.prepare_txt(filename)
-        self.open_file_and_check_viewer(filename, ["vim", "user@"],
-                                        ["gedit", "emacs", "libreoffice"])
+        self.open_file_and_check_viewer(
+            filename, ["vim", "user@"],
+            ["gedit", "emacs", "libreoffice", "gnome-text-editor"])
 
     def test_001_pdf(self):
         filename = "/home/user/test_file.pdf"
@@ -292,9 +290,10 @@ class TC_50_MimeHandlers:
     def test_100_txt_dispvm(self):
         filename = "/home/user/test_file.txt"
         self.prepare_txt(filename)
-        self.open_file_and_check_viewer(filename, ["vim", "user@"],
-                                        ["gedit", "emacs", "libreoffice"],
-                                        dispvm=True)
+        self.open_file_and_check_viewer(
+            filename, ["vim", "user@"],
+            ["gedit", "emacs", "libreoffice", "gnome-text-editor"],
+            dispvm=True)
 
     def test_101_pdf_dispvm(self):
         filename = "/home/user/test_file.pdf"

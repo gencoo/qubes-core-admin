@@ -38,7 +38,7 @@ def _setter_mac(self, prop, value):
     if not isinstance(value, str):
         raise ValueError('MAC address must be a string')
     value = value.lower()
-    if re.match(r"^([0-9a-f][0-9a-f]:){5}[0-9a-f][0-9a-f]$", value) is None:
+    if re.match(r"\A([0-9a-f][0-9a-f]:){5}[0-9a-f][0-9a-f]\Z", value) is None:
         raise ValueError('Invalid MAC address value')
     return value
 
@@ -89,6 +89,29 @@ def _setter_provides_network(self, prop, value):
                 '\'netvm\' first')
 
     return value
+
+
+class StrSerializableTuple(tuple):
+    def __str__(self):
+        # verify it can be deserialized later(currently 'dns'
+        # property is the only using this, and it is safe)
+        if any(' ' in el for el in self):
+            raise ValueError(
+                'space found in a list element {!r}'.format(self))
+        return ' '.join(self)
+
+
+def vmid_to_ipv4(prefix, vmid):
+    # avoid .0 and .255 addresses, it may trip some heuristics
+    # if OS assumes /24 netmask
+    # preserve unchanged IPs for low vmid
+    if vmid < 255:
+        return ipaddress.IPv4Address('{}.{}.{}'.format(
+            prefix, (vmid >> 8) & 0xff, vmid & 0xff))
+    # don't reserve first .1 for vmid 0, as it is invalid
+    vmid -= 1
+    return ipaddress.IPv4Address('{}.{}.{}'.format(
+        prefix, vmid // 254, (vmid % 254) + 1))
 
 
 class NetVMMixin(qubes.events.Emitter):
@@ -170,13 +193,9 @@ class NetVMMixin(qubes.events.Emitter):
         '''
         import qubes.vm.dispvm  # pylint: disable=redefined-outer-name
         if isinstance(vm, qubes.vm.dispvm.DispVM):
-            return ipaddress.IPv4Address('10.138.{}.{}'.format(
-                (vm.dispid >> 8) & 0xff, vm.dispid & 0xff))
+            return vmid_to_ipv4('10.138', vm.dispid)
 
-        # VM technically can get address which ends in '.0'. This currently
-        # does not happen, because qid < 253, but may happen in the future.
-        return ipaddress.IPv4Address('10.137.{}.{}'.format(
-            (vm.qid >> 8) & 0xff, vm.qid & 0xff))
+        return vmid_to_ipv4('10.137', vm.qid)
 
     @staticmethod
     def get_ip6_for_vm(vm):
@@ -224,14 +243,14 @@ class NetVMMixin(qubes.events.Emitter):
     # used in both
     #
 
-    @property
+    @qubes.stateless_property
     def dns(self):
-        '''Secondary DNS server set up for this domain.'''
+        '''DNS servers set up for this domain.'''
         if self.netvm is not None or self.provides_network:
-            return (
+            return StrSerializableTuple((
                 '10.139.1.1',
                 '10.139.1.2',
-            )
+            ))
 
         return None
 
@@ -502,21 +521,21 @@ class NetVMMixin(qubes.events.Emitter):
     @qubes.events.handler('feature-pre-set:net.fake-ip')
     def on_feature_pre_set_net_fake_ip(self, event, name, newvalue,
                                        oldvalue=None):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         # format validation
         ipaddress.IPv4Address(newvalue)
 
     @qubes.events.handler('feature-pre-set:net.fake-gateway')
     def on_feature_pre_set_net_fake_gw(self, event, name, newvalue,
                                        oldvalue=None):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         # format validation
         ipaddress.IPv4Address(newvalue)
 
     @qubes.events.handler('feature-pre-set:net.fake-netmask')
     def on_feature_pre_set_net_fake_nm(self, event, name, newvalue,
                                        oldvalue=None):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         # format validation
         if not newvalue.isdigit():
             ipaddress.IPv4Address(newvalue)

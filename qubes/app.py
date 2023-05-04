@@ -20,6 +20,7 @@
 # License along with this library; if not, see <https://www.gnu.org/licenses/>.
 #
 
+import asyncio
 import collections.abc
 import copy
 import functools
@@ -34,7 +35,6 @@ import traceback
 import uuid
 from contextlib import suppress
 
-import asyncio
 import jinja2
 import libvirt
 import lxml.etree
@@ -66,7 +66,6 @@ import qubes.vm
 import qubes.vm.adminvm
 import qubes.vm.qubesvm
 import qubes.vm.templatevm
-
 
 # pylint: enable=wrong-import-position
 
@@ -214,7 +213,7 @@ class VMMConnection:
     def xs(self):
         """Connection to Xen Store
 
-        This property in available only when running on Xen.
+        This property is available only when running on Xen.
         """
 
         # XXX what about the case when we run under KVM,
@@ -230,7 +229,7 @@ class VMMConnection:
     def xc(self):
         """Connection to Xen
 
-        This property in available only when running on Xen.
+        This property is available only when running on Xen.
         """
 
         # XXX what about the case when we run under KVM,
@@ -309,7 +308,7 @@ class QubesHost:
         if self._cpu_family is None or self._cpu_model is None:
             family = None
             model = None
-            with open('/proc/cpuinfo') as cpuinfo:
+            with open('/proc/cpuinfo', encoding='ascii') as cpuinfo:
                 for line in cpuinfo.readlines():
                     line = line.strip()
                     if not line:
@@ -427,7 +426,7 @@ class VMCollection:
 
     def __init__(self, app):
         self.app = app
-        self._dict = dict()
+        self._dict = {}
 
     def close(self):
         del self.app
@@ -717,7 +716,7 @@ class Qubes(qubes.PropertyHolder):
 
             When storage pool is added.
 
-            Handler for this event can be asynchronous (a coroutine).
+            Handler for this event may be asynchronous.
 
             :param subject: Event emitter
             :param event: Event name (``'pool-add'``)
@@ -728,7 +727,7 @@ class Qubes(qubes.PropertyHolder):
             When pool is deleted. Pool is still contained within app.pools
             dictionary. You may prevent removal by raising an exception.
 
-            Handler for this event can be asynchronous (a coroutine).
+            Handler for this event may be asynchronous.
 
             :param subject: Event emitter
             :param event: Event name (``'pool-pre-delete'``)
@@ -739,7 +738,7 @@ class Qubes(qubes.PropertyHolder):
             When storage pool is deleted. The pool is already removed at this
             point.
 
-            Handler for this event can be asynchronous (a coroutine).
+            Handler for this event may be asynchronous.
 
             :param subject: Event emitter
             :param event: Event name (``'pool-delete'``)
@@ -1331,29 +1330,26 @@ class Qubes(qubes.PropertyHolder):
 
         raise qubes.exc.QubesLabelNotFoundError(label)
 
-    @asyncio.coroutine
-    def setup_pools(self):
+    async def setup_pools(self):
         """ Run implementation specific setup for each storage pool. """
-        yield from qubes.utils.void_coros_maybe(
+        await qubes.utils.void_coros_maybe(
             pool.setup() for pool in self.pools.values())
 
-    @asyncio.coroutine
-    def add_pool(self, name, **kwargs):
+    async def add_pool(self, name, **kwargs):
         """ Add a storage pool to config."""
 
-        if name in self.pools.keys():
+        if name in self.pools:
             raise qubes.exc.QubesException('pool named %s already exists \n' %
                                            name)
 
         kwargs['name'] = name
         pool = self._get_pool(**kwargs)
-        yield from qubes.utils.coro_maybe(pool.setup())
+        await qubes.utils.coro_maybe(pool.setup())
         self.pools[name] = pool
-        yield from self.fire_event_async('pool-add', pool=pool)
+        await self.fire_event_async('pool-add', pool=pool)
         return pool
 
-    @asyncio.coroutine
-    def remove_pool(self, name):
+    async def remove_pool(self, name):
         """ Remove a storage pool from config file.  """
         try:
             pool = self.pools[name]
@@ -1369,11 +1365,11 @@ class Qubes(qubes.PropertyHolder):
                         pool,
                         'Storage pool is in use: '
                         'set as {}'.format('default_pool' + suffix))
-            yield from self.fire_event_async('pool-pre-delete',
+            await self.fire_event_async('pool-pre-delete',
                                              pre_event=True, pool=pool)
             del self.pools[name]
-            yield from qubes.utils.coro_maybe(pool.destroy())
-            yield from self.fire_event_async('pool-delete', pool=pool)
+            await qubes.utils.coro_maybe(pool.destroy())
+            await self.fire_event_async('pool-delete', pool=pool)
         except KeyError:
             return
 
@@ -1408,6 +1404,27 @@ class Qubes(qubes.PropertyHolder):
             raise qubes.exc.QubesException('No driver %s for pool %s' %
                                            (driver, name))
 
+    async def stop_storage(self):
+        """
+        Stop the storage of all domains that are not running.
+        """
+        async def stop(i):
+            async with i.startup_lock:
+                if not i.is_running():
+                    await i.storage.stop()
+        future = tuple(asyncio.create_task(stop(i)) for i in self.domains
+                       if i.klass != 'AdminVM')
+        finished = ()
+        while future:
+            qubes.utils.systemd_extend_timeout()
+            finished, future = await asyncio.wait(future, timeout=30)
+            for i in finished:
+                try:
+                    await i
+                except Exception:  # pylint: disable=broad-except
+                    self.log.exception(
+                        'Stopping storage for a qube raised an exception')
+
     def register_event_handlers(self, old_connection=None):
         """Register libvirt event handlers, which will translate libvirt
         events into qubes.events. This function should be called only in
@@ -1427,6 +1444,13 @@ class Qubes(qubes.PropertyHolder):
                 libvirt.VIR_DOMAIN_EVENT_ID_LIFECYCLE,
                 self._domain_event_callback,
                 None))
+        if old_connection:
+            # If this is libvirt restart, check if ensure no shutdown events
+            # were missed. on_libvirt_domain_stopped() can deal with duplicated
+            # events.
+            for vm in self.domains.values():
+                if not vm.is_running():
+                    vm.on_libvirt_domain_stopped()
 
     def _domain_event_callback(self, _conn, domain, event, _detail, _opaque):
         """Generic libvirt event handler (virConnectDomainEventCallback),
@@ -1505,7 +1529,7 @@ class Qubes(qubes.PropertyHolder):
 
     @qubes.events.handler('property-pre-set:clockvm')
     def on_property_pre_set_clockvm(self, event, name, newvalue, oldvalue=None):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         if newvalue is None:
             return
         if 'service.clocksync' not in newvalue.features:
@@ -1513,7 +1537,7 @@ class Qubes(qubes.PropertyHolder):
 
     @qubes.events.handler('property-set:clockvm')
     def on_property_set_clockvm(self, event, name, newvalue, oldvalue=None):
-        # pylint: disable=unused-argument,no-self-use
+        # pylint: disable=unused-argument
         if oldvalue == newvalue:
             return
         if oldvalue and oldvalue.features.get('service.clocksync', False):

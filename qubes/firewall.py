@@ -130,6 +130,8 @@ class DstHost(RuleOption):
                     value = untrusted_value
         else:
             untrusted_host, untrusted_prefixlen = untrusted_value.split('/', 1)
+            if not untrusted_prefixlen.isdigit():
+                raise ValueError('bad prefix length')
             prefixlen = int(untrusted_prefixlen)
             if prefixlen < 0:
                 raise ValueError('netmask must be non-negative')
@@ -185,6 +187,9 @@ class DstPorts(RuleOption):
 
 class IcmpType(RuleOption):
     def __init__(self, untrusted_value):
+        if (not isinstance(untrusted_value, int) and
+            (len(untrusted_value) > 3 or not untrusted_value.isdigit())):
+            raise ValueError('bad ICMP type')
         untrusted_value = int(untrusted_value)
         if untrusted_value < 0 or untrusted_value > 255:
             raise ValueError('ICMP type out of range')
@@ -206,6 +211,9 @@ class SpecialTarget(RuleChoice):
 class Expire(RuleOption):
     def __init__(self, untrusted_value):
         super().__init__(untrusted_value)
+        if not (isinstance(untrusted_value, (int, float)) or
+                untrusted_value.isdigit()):
+            raise ValueError('bad expiration time')
         self.datetime = datetime.datetime.fromtimestamp(int(untrusted_value))
 
     @property
@@ -357,7 +365,7 @@ class Rule(qubes.PropertyHolder):
             return None
         # put comment at the end
         for prop in sorted(self.property_list(),
-                key=(lambda p: p.__name__ == 'comment')):
+                key=lambda p: p.__name__ == 'comment'):
             value = getattr(self, prop.__name__)
             if value is None:
                 continue
@@ -514,7 +522,7 @@ class Firewall:
         '''Load old (Qubes < 4.0) firewall XML format'''
         policy_v1 = xml_root.get('policy')
         assert policy_v1 in ('allow', 'deny')
-        default_policy_is_accept = (policy_v1 == 'allow')
+        default_policy_is_accept = policy_v1 == 'allow'
 
         def _translate_action(key):
             if xml_root.get(key, policy_v1) == 'allow':

@@ -53,7 +53,7 @@ def validate_name(holder, prop, value):
 
     # this regexp does not contain '+'; if it had it, we should specifically
     # disallow 'lost+found' #1440
-    if re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*$", value) is None:
+    if re.match(r"\A[a-zA-Z][a-zA-Z0-9_-]*\Z", value) is None:
         if holder is not None and prop is not None:
             raise qubes.exc.QubesPropertyValueError(holder, prop, value,
                 '{} value contains illegal characters'.format(prop.__name__))
@@ -62,6 +62,9 @@ def validate_name(holder, prop, value):
     if value in ('none', 'default'):
         raise qubes.exc.QubesValueError(
             'VM name cannot be \'none\' nor \'default\'')
+    if value.endswith('-dm'):
+        raise qubes.exc.QubesValueError(
+            'VM name cannot end with -dm')
 
 def setter_label(self, prop, value):
     ''' Helper for setting the domain label '''
@@ -266,7 +269,7 @@ class BaseVM(qubes.PropertyHolder):
             for node in parent.xpath('./device'):
                 options = {}
                 for option in node.xpath('./option'):
-                    options[option.get('name')] = option.text
+                    options[option.get('name')] = str(option.text)
 
                 try:
                     device_assignment = qubes.devices.DeviceAssignment(
@@ -365,12 +368,14 @@ class BaseVM(qubes.PropertyHolder):
         '''Create libvirt's XML domain config file
 
         '''
+        def bug(msg, *args):
+            raise AssertionError(msg % args if args else msg)
         domain_config = self.app.env.select_template([
                 'libvirt/xen/by-name/{}.xml'.format(self.name),
                 'libvirt/xen-user.xml',
                 'libvirt/xen-dist.xml',
                 'libvirt/xen.xml',
-            ]).render(vm=self)
+            ]).render(vm=self, bug=bug)
         return domain_config
 
     def watch_qdb_path(self, path):
@@ -472,9 +477,7 @@ class VMProperty(qubes.property):
             if self.allow_none:
                 super().__set__(instance, value)
                 return
-            raise ValueError(
-                'Property {!r} does not allow setting to {!r}'.format(
-                    self.__name__, value))
+            raise qubes.exc.QubesPropertyValueError(instance, self, value)
 
         app = instance if isinstance(instance, qubes.Qubes) else instance.app
 
@@ -484,10 +487,11 @@ class VMProperty(qubes.property):
             raise qubes.exc.QubesVMNotFoundError(value)
 
         if not isinstance(vm, self.vmclass):
-            raise TypeError('wrong VM class: domains[{!r}] is of type {!s} '
-                'and not {!s}'.format(value,
-                    vm.__class__.__name__,
-                    self.vmclass.__name__))
+            raise qubes.exc.QubesPropertyValueError(instance, self, value,
+                    'wrong VM class: domains[{!r}] is of type {!s} '
+                    'and not {!s}'.format(value,
+                        vm.__class__.__name__,
+                        self.vmclass.__name__))
 
         super().__set__(instance, vm)
 

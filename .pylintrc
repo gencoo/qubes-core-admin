@@ -6,11 +6,7 @@ ignore=tests
 # abstract-class-little-used: see http://www.logilab.org/ticket/111138
 # deprecated-method:
 #   enable again after disabling py-3.4.3 asyncio.ensure_future compat hack
-# not-an-iterable:
-#   a lot of false possitives for asyncio (yield from (some coroutine))
 disable=
-  abstract-class-little-used,
-  bad-continuation,
   cyclic-import,
   deprecated-method,
   duplicate-code,
@@ -18,13 +14,11 @@ disable=
   fixme,
   import-outside-toplevel,
   locally-disabled,
-  locally-enabled,
   logging-format-interpolation,
   missing-docstring,
-  not-an-iterable,
   raise-missing-from,
-  star-args,
-  wrong-import-order
+  wrong-import-order,
+  consider-using-f-string
 
 [REPORTS]
 
@@ -50,6 +44,7 @@ generated-members=
 [BASIC]
 
 # List of builtins function names that should not be used, separated by a comma
+load-plugins=pylint.extensions.bad_builtin
 bad-functions=apply,input
 
 # Regular expression which should only match correct module names

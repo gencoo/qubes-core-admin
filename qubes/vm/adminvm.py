@@ -29,9 +29,10 @@ import qubes
 import qubes.exc
 import qubes.vm
 from qubes.vm.qubesvm import _setter_kbd_layout
+from qubes.vm import BaseVM
 
 
-class AdminVM(qubes.vm.BaseVM):
+class AdminVM(BaseVM):
     '''Dom0'''
 
     dir_path = None
@@ -82,16 +83,21 @@ class AdminVM(qubes.vm.BaseVM):
     def __str__(self):
         return self.name
 
-    def __lt__(self, other):
+    def __lt__(self, other: object):
+        if not isinstance(other, BaseVM):
+            return NotImplemented
         # order dom0 before anything
-        return self.name != other.name
+        if not isinstance(other, AdminVM):
+            return True
+        assert self is other, "multiple instances of AdminVM?"
+        return False
 
     @property
     def attached_volumes(self):
         return []
 
     @property
-    def xid(self):
+    def xid(self) -> int:
         '''Always ``0``.
 
         .. seealso:
@@ -100,7 +106,7 @@ class AdminVM(qubes.vm.BaseVM):
         return 0
 
     @qubes.stateless_property
-    def icon(self): # pylint: disable=no-self-use
+    def icon(self):
         """freedesktop icon name, suitable for use in
         :py:meth:`PyQt4.QtGui.QIcon.fromTheme`"""
         return 'adminvm-black'
@@ -154,7 +160,7 @@ class AdminVM(qubes.vm.BaseVM):
         '''
 
         # return psutil.virtual_memory().total/1024
-        with open('/proc/meminfo') as file:
+        with open('/proc/meminfo', encoding='ascii') as file:
             for line in file:
                 if line.startswith('MemTotal:'):
                     return int(line.split(':')[1].strip().split()[0])
@@ -192,7 +198,7 @@ class AdminVM(qubes.vm.BaseVM):
 
         .. seealso:
            :py:meth:`qubes.vm.qubesvm.QubesVM.verify_files`
-        '''  # pylint: disable=no-self-use
+        '''
         return True
 
     def start(self, start_guid=True, notify_function=None,

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash --
 #
 # This Admin API call is implemented as a custom script, instead of dumb
 # passthrough to qubesd because it may get huge amount of data (whole root.img
@@ -30,33 +30,41 @@
 # data size in bytes. This is so that we can already notify qubesd to create a
 # volume with the new size.
 
-set -e
+set -euo pipefail
 
 # make dd output consistent
 export LC_ALL=C
 
 # use temporary file, because env variables deal poorly with \0 inside
 tmpfile=$(mktemp)
-trap 'rm -f $tmpfile' EXIT
+trap 'rm -f -- "$tmpfile"' EXIT
 
-requested_size=""
-if [[ "${0##*/}" == admin.vm.volume.ImportWithSize ]]; then
-    read -r requested_size
-fi
+case "${0##*/}" in
+admin.vm.volume.ImportWithSize) flags=(--single-line --max-bytes=21);;
+admin.vm.volume.Import) flags=(--empty);;
+*) printf 'Invoked with unknown basename %q, cannot continue\n' "${0##*/}" >&2; exit 1;;
+esac
 
-echo -n "$requested_size" | qubesd-query -c /var/run/qubesd.internal.sock \
+qubesd-query --null "${flags[@]}" -c /var/run/qubesd.internal.sock \
     "$QREXEC_REMOTE_DOMAIN" \
     "internal.vm.volume.ImportBegin" \
     "$QREXEC_REQUESTED_TARGET" \
     "$1" >"$tmpfile"
 
-# exit if qubesd returned an error (not '0\0')
-if [ "$(head -c 2 "$tmpfile" | xxd -p)" != "3000" ]; then
-    cat "$tmpfile"
-    exit 1
-fi
-size=$(tail -c +3 "$tmpfile"|cut -d ' ' -f 1)
-path=$(tail -c +3 "$tmpfile"|cut -d ' ' -f 2)
+{
+    # Read response from qubesd
+    read -r -d '' first
+
+    # exit if qubesd returned an error (not '0\0')
+    if [[ "$first" != '0' ]]; then
+        head -c-1 -- "$tmpfile"
+        exit 1
+    fi
+
+    # Finish reading response
+    read -r -d ' ' size
+    read -r -d '' path
+} < "$tmpfile"
 
 error=""
 

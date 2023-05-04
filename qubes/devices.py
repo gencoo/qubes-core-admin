@@ -21,7 +21,7 @@
 
 '''API for various types of devices.
 
-Main concept is that some domain main
+Main concept is that some domain may
 expose (potentially multiple) devices, which can be attached to other domains.
 Devices can be of different buses (like 'pci', 'usb', etc). Each device
 bus is implemented by an extension.
@@ -29,25 +29,25 @@ bus is implemented by an extension.
 Devices are identified by pair of (backend domain, `ident`), where `ident` is
 :py:class:`str` and can contain only characters from `[a-zA-Z0-9._-]` set.
 
-Such extension should provide:
- - `qubes.devices` endpoint - a class descendant from
- :py:class:`qubes.devices.DeviceInfo`, designed to hold device description (
- including bus-specific properties)
+Such extension should:
+ - provide `qubes.devices` endpoint - a class descendant from
+   :py:class:`qubes.devices.DeviceInfo`, designed to hold device description
+   (including bus-specific properties)
  - handle `device-attach:bus` and `device-detach:bus` events for
- performing the attach/detach action; events are fired even when domain isn't
- running and extension should be prepared for this; handlers for those events
- can be coroutines
+   performing the attach/detach action; events are fired even when domain isn't
+   running and extension should be prepared for this; handlers for those events
+   can be coroutines
  - handle `device-list:bus` event - list devices exposed by particular
- domain; it should return list of appropriate DeviceInfo objects
+   domain; it should return a list of appropriate DeviceInfo objects
  - handle `device-get:bus` event - get one device object exposed by this
- domain of given identifier
- - handle `device-list-attached:class` event - list currently attached
- devices to this domain
- - fire `device-list-change:class` event when device list change is detected
- (new/removed device)
+   domain of given identifier
+ - handle `device-list-attached:class` event - list devices currently attached
+   to this domain
+ - fire `device-list-change:class` event when a device list change is detected
+   (new/removed device)
 
-Note that device-listing event handlers can not be asynchronous. This for
-example means you can not call qrexec service there. This is intentional to
+Note that device-listing event handlers cannot be asynchronous. This for
+example means you cannot call qrexec service there. This is intentional to
 keep device listing operation cheap. You need to design the extension to take
 this into account (for example by using QubesDB).
 
@@ -55,8 +55,6 @@ Extension may use QubesDB watch API (QubesVM.watch_qdb_path(path), then handle
 `domain-qdb-change:path`) to detect changes and fire
 `device-list-change:class` event.
 '''
-import asyncio
-
 import qubes.utils
 
 class DeviceNotAttached(qubes.exc.QubesException, KeyError):
@@ -170,7 +168,7 @@ class DeviceCollection:
 
             Fired when device is attached to a VM.
 
-            Handler for this event can be asynchronous (a coroutine).
+            Handler for this event may be asynchronous.
 
             :param device: :py:class:`DeviceInfo` object to be attached
             :param options: :py:class:`dict` of attachment options
@@ -179,7 +177,7 @@ class DeviceCollection:
 
             Fired before device is attached to a VM
 
-            Handler for this event can be asynchronous (a coroutine).
+            Handler for this event may be asynchronous.
 
             :param device: :py:class:`DeviceInfo` object to be attached
 
@@ -228,8 +226,7 @@ class DeviceCollection:
         self.devclass = qubes.utils.get_entry_point_one(
             'qubes.devices', self._bus)
 
-    @asyncio.coroutine
-    def attach(self, device_assignment: DeviceAssignment):
+    async def attach(self, device_assignment: DeviceAssignment):
         '''Attach (add) device to domain.
 
         :param DeviceInfo device: device object
@@ -249,12 +246,12 @@ class DeviceCollection:
             raise DeviceAlreadyAttached(
                 'device {!s} of class {} already attached to {!s}'.format(
                     device, self._bus, self._vm))
-        yield from self._vm.fire_event_async('device-pre-attach:' + self._bus,
+        await self._vm.fire_event_async('device-pre-attach:' + self._bus,
             pre_event=True,
             device=device, options=device_assignment.options)
         if device_assignment.persistent:
             self._set.add(device_assignment)
-        yield from self._vm.fire_event_async('device-attach:' + self._bus,
+        await self._vm.fire_event_async('device-attach:' + self._bus,
             device=device, options=device_assignment.options)
 
     def load_persistent(self, device_assignment: DeviceAssignment):
@@ -289,8 +286,7 @@ class DeviceCollection:
         elif not persistent and device in self._set:
             self._set.discard(assignment)
 
-    @asyncio.coroutine
-    def detach(self, device_assignment: DeviceAssignment):
+    async def detach(self, device_assignment: DeviceAssignment):
         '''Detach (remove) device from domain.
 
         :param DeviceInfo device: device object
@@ -311,13 +307,13 @@ class DeviceCollection:
                     device_assignment.ident, self._bus, self._vm))
 
         device = device_assignment.device
-        yield from self._vm.fire_event_async('device-pre-detach:' + self._bus,
+        await self._vm.fire_event_async('device-pre-detach:' + self._bus,
             pre_event=True, device=device)
         if device in self._set:
             device_assignment.persistent = True
             self._set.discard(device_assignment)
 
-        yield from self._vm.fire_event_async('device-detach:' + self._bus,
+        await self._vm.fire_event_async('device-detach:' + self._bus,
             device=device)
 
     def attached(self):
@@ -405,7 +401,7 @@ class DeviceCollection:
 
 
 class DeviceManager(dict):
-    '''Device manager that hold all devices by their classess.
+    '''Device manager that hold all devices by their classes.
 
     :param vm: VM for which we manage devices
     '''

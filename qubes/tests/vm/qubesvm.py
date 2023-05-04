@@ -425,6 +425,10 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         templatevm.label = "blue"
         self.assertEqual(templatevm.icon, "templatevm-blue")
 
+        standalonevm = self.get_vm(cls=qubes.vm.standalonevm.StandaloneVM)
+        standalonevm.label = "blue"
+        self.assertEqual(standalonevm.icon, "standalonevm-blue")
+
         vm.template_for_dispvms = True
         dispvm = self.get_vm(cls=qubes.vm.dispvm.DispVM, template=vm,
                              dispid=10)
@@ -771,7 +775,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <type arch="x86_64" machine="xenpv">linux</type>
             <kernel>/tmp/kernel/vmlinuz</kernel>
             <initrd>/tmp/kernel/initramfs</initrd>
-            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0</cmdline>
+            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0 swiotlb=2048</cmdline>
         </os>
         <features>
         </features>
@@ -787,6 +791,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
                 <source dev="/tmp/kernel/modules.img" />
                 <target dev="xvdd" />
                 <backenddomain name="dom0" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <console type="pty">
                 <target type="xen" port="0"/>
@@ -810,10 +815,10 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         vm.volumes['kernel'] = unittest.mock.Mock(**{
             'kernels_dir': '/tmp/kernel',
             'block_device.return_value.domain': 'dom0',
-            'block_device.return_value.script': None,
             'block_device.return_value.path': '/tmp/kernel/modules.img',
             'block_device.return_value.devtype': 'disk',
             'block_device.return_value.name': 'kernel',
+            'ephemeral': False,
         })
         libvirt_xml = vm.create_config_file()
         self.assertXMLEqual(lxml.etree.XML(libvirt_xml),
@@ -830,6 +835,8 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenfv">hvm</type>
@@ -848,7 +855,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <apic/>
             <viridian/>
         </features>
-        <clock offset="variable" adjustment="0" basis="localtime" />
+        <clock offset="variable" adjustment="0" basis="utc" />
         <on_poweroff>destroy</on_poweroff>
         <on_reboot>destroy</on_reboot>
         <on_crash>destroy</on_crash>
@@ -885,6 +892,8 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenfv">hvm</type>
@@ -896,7 +905,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <loader type="rom">hvmloader</loader>
             <boot dev="cdrom" />
             <boot dev="hd" />
-            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0</cmdline>
+            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0 swiotlb=2048</cmdline>
         </os>
         <features>
             <pae/>
@@ -904,7 +913,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <apic/>
             <viridian/>
         </features>
-        <clock offset="variable" adjustment="0" basis="localtime" />
+        <clock offset="variable" adjustment="0" basis="utc" />
         <on_poweroff>destroy</on_poweroff>
         <on_reboot>destroy</on_reboot>
         <on_crash>destroy</on_crash>
@@ -950,6 +959,8 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenfv">hvm</type>
@@ -961,7 +972,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <loader type="rom">hvmloader</loader>
             <boot dev="cdrom" />
             <boot dev="hd" />
-            <cmdline>kernel &lt;text&gt; specific options</cmdline>
+            <cmdline>kernel &lt;text&gt;&#39;&#34;&amp; specific options swiotlb=2048</cmdline>
         </os>
         <features>
             <pae/>
@@ -969,7 +980,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <apic/>
             <viridian/>
         </features>
-        <clock offset="variable" adjustment="0" basis="localtime" />
+        <clock offset="variable" adjustment="0" basis="utc" />
         <on_poweroff>destroy</on_poweroff>
         <on_reboot>destroy</on_reboot>
         <on_crash>destroy</on_crash>
@@ -1000,7 +1011,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             open(os.path.join(kernel_dir, 'initramfs'), 'w').close()
             with open(os.path.join(kernel_dir,
                     'default-kernelopts-common.txt'), 'w') as f:
-                f.write('kernel <text> specific options \n')
+                f.write('kernel <text>\'"& specific options \n')
             self.addCleanup(shutil.rmtree, '/tmp/qubes-test')
             vm.kernel = 'dummy'
             libvirt_xml = vm.create_config_file()
@@ -1018,12 +1029,14 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenpvh">xenpvh</type>
             <kernel>/tmp/kernel/vmlinuz</kernel>
             <initrd>/tmp/kernel/initramfs</initrd>
-            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0</cmdline>
+            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0 swiotlb=2048</cmdline>
         </os>
         <features>
             <pae/>
@@ -1043,6 +1056,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
                 <source dev="/tmp/kernel/modules.img" />
                 <target dev="xvdd" />
                 <backenddomain name="dom0" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <console type="pty">
                 <target type="xen" port="0"/>
@@ -1066,10 +1080,10 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         vm.volumes['kernel'] = unittest.mock.Mock(**{
             'kernels_dir': '/tmp/kernel',
             'block_device.return_value.domain': 'dom0',
-            'block_device.return_value.script': None,
             'block_device.return_value.path': '/tmp/kernel/modules.img',
             'block_device.return_value.devtype': 'disk',
             'block_device.return_value.name': 'kernel',
+            'ephemeral': False,
         })
         libvirt_xml = vm.create_config_file()
         self.assertXMLEqual(lxml.etree.XML(libvirt_xml),
@@ -1086,12 +1100,14 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenpvh">xenpvh</type>
             <kernel>/tmp/kernel/vmlinuz</kernel>
             <initrd>/tmp/kernel/initramfs</initrd>
-            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0</cmdline>
+            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0 swiotlb=2048</cmdline>
         </os>
         <features>
             <pae/>
@@ -1111,6 +1127,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
                 <source dev="/tmp/kernel/modules.img" />
                 <target dev="xvdd" />
                 <backenddomain name="dom0" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <console type="pty">
                 <target type="xen" port="0"/>
@@ -1135,10 +1152,10 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         vm.volumes['kernel'] = unittest.mock.Mock(**{
             'kernels_dir': '/tmp/kernel',
             'block_device.return_value.domain': 'dom0',
-            'block_device.return_value.script': None,
             'block_device.return_value.path': '/tmp/kernel/modules.img',
             'block_device.return_value.devtype': 'disk',
             'block_device.return_value.name': 'kernel',
+            'ephemeral': False,
         })
         libvirt_xml = vm.create_config_file()
         self.assertXMLEqual(lxml.etree.XML(libvirt_xml),
@@ -1155,6 +1172,8 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenfv">hvm</type>
@@ -1176,7 +1195,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
                 <e820_host state="on"/>
             </xen>
         </features>
-        <clock offset="variable" adjustment="0" basis="localtime" />
+        <clock offset="variable" adjustment="0" basis="utc" />
         <on_poweroff>destroy</on_poweroff>
         <on_reboot>destroy</on_reboot>
         <on_crash>destroy</on_crash>
@@ -1234,6 +1253,8 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenfv">hvm</type>
@@ -1252,7 +1273,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <apic/>
             <viridian/>
         </features>
-        <clock offset="variable" adjustment="0" basis="localtime" />
+        <clock offset="variable" adjustment="0" basis="utc" />
         <on_poweroff>destroy</on_poweroff>
         <on_reboot>destroy</on_reboot>
         <on_crash>destroy</on_crash>
@@ -1263,6 +1284,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
                 <!-- prefer xvdd for CDROM -->
                 <target dev="xvdd" />
                 <readonly/>
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <!-- server_ip is the address of stubdomain. It hosts it's own DNS server. -->
             <emulator type="stubdom-linux" />
@@ -1313,6 +1335,8 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenfv">hvm</type>
@@ -1324,7 +1348,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <loader type="rom">hvmloader</loader>
             <boot dev="cdrom" />
             <boot dev="hd" />
-            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0</cmdline>
+            <cmdline>root=/dev/mapper/dmroot ro nomodeset console=hvc0 rd_NO_PLYMOUTH rd.plymouth.enable=0 plymouth.enable=0 swiotlb=2048</cmdline>
         </os>
         <features>
             <pae/>
@@ -1332,7 +1356,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <apic/>
             <viridian/>
         </features>
-        <clock offset="variable" adjustment="0" basis="localtime" />
+        <clock offset="variable" adjustment="0" basis="utc" />
         <on_poweroff>destroy</on_poweroff>
         <on_reboot>destroy</on_reboot>
         <on_crash>destroy</on_crash>
@@ -1342,12 +1366,14 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
                 <source dev="/tmp/kernel/modules.img" />
                 <target dev="xvdd" />
                 <backenddomain name="dom0" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <disk type="block" device="cdrom">
                 <driver name="phy" />
                 <source dev="/dev/sda" />
                 <target dev="xvdi" />
                 <readonly/>
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <!-- server_ip is the address of stubdomain. It hosts it's own DNS server. -->
             <emulator type="stubdom-linux" />
@@ -1387,10 +1413,10 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         vm.volumes['kernel'] = unittest.mock.Mock(**{
             'kernels_dir': '/tmp/kernel',
             'block_device.return_value.domain': 'dom0',
-            'block_device.return_value.script': None,
             'block_device.return_value.path': '/tmp/kernel/modules.img',
             'block_device.return_value.devtype': 'disk',
             'block_device.return_value.name': 'kernel',
+            'ephemeral': False,
         })
         dom0.events_enabled = True
         self.app.vmm.offline_mode = False
@@ -1413,6 +1439,8 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenfv">hvm</type>
@@ -1431,7 +1459,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <apic/>
             <viridian/>
         </features>
-        <clock offset="variable" adjustment="0" basis="localtime" />
+        <clock offset="variable" adjustment="0" basis="utc" />
         <on_poweroff>destroy</on_poweroff>
         <on_reboot>destroy</on_reboot>
         <on_crash>destroy</on_crash>
@@ -1485,6 +1513,8 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <!-- disable nested HVM -->
             <feature name='vmx' policy='disable'/>
             <feature name='svm' policy='disable'/>
+            <!-- let the guest know the TSC is safe to use (no migration) -->
+            <feature name='invtsc' policy='require'/>
         </cpu>
         <os>
             <type arch="x86_64" machine="xenfv">hvm</type>
@@ -1503,7 +1533,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             <apic/>
             <viridian/>
         </features>
-        <clock offset="variable" adjustment="0" basis="localtime" />
+        <clock offset="variable" adjustment="0" basis="utc" />
         <on_poweroff>destroy</on_poweroff>
         <on_reboot>destroy</on_reboot>
         <on_crash>destroy</on_crash>
@@ -1513,43 +1543,49 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
                 <source dev="/dev/loop0" />
                 <target dev="xvda" />
                 <backenddomain name="dom0" />
-                <script path="/tmp/script" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <disk type="block" device="disk">
                 <driver name="phy" />
                 <source dev="/dev/loop1" />
                 <target dev="xvde" />
                 <backenddomain name="dom0" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <disk type="block" device="disk">
                 <driver name="phy" />
                 <source dev="/dev/loop2" />
                 <target dev="xvdf" />
                 <backenddomain name="dom0" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
 
             <disk type="block" device="disk">
                 <driver name="phy" />
                 <source dev="/dev/sdb" />
                 <target dev="xvdl" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <disk type="block" device="cdrom">
                 <driver name="phy" />
                 <source dev="/dev/sda" />
                 <!-- prefer xvdd for CDROM -->
                 <target dev="xvdd" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <disk type="block" device="disk">
                 <driver name="phy" />
                 <source dev="/dev/loop0" />
                 <target dev="xvdi" />
                 <backenddomain name="backend0" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <disk type="block" device="disk">
                 <driver name="phy" />
                 <source dev="/dev/loop0" />
                 <target dev="xvdj" />
                 <backenddomain name="backend1" />
+                <script path="/etc/xen/scripts/qubes-block" />
             </disk>
             <!-- server_ip is the address of stubdomain. It hosts it's own DNS server. -->
             <emulator type="stubdom-linux" />
@@ -1573,21 +1609,21 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             'block_device.return_value.path': '/dev/loop0',
             'block_device.return_value.devtype': 'disk',
             'block_device.return_value.domain': 'dom0',
-            'block_device.return_value.script': '/tmp/script',
+            'ephemeral': False,
         })
         vm.volumes['other'] = unittest.mock.Mock(**{
             'block_device.return_value.name': 'other',
             'block_device.return_value.path': '/dev/loop1',
             'block_device.return_value.devtype': 'disk',
             'block_device.return_value.domain': 'dom0',
-            'block_device.return_value.script': None,
+            'ephemeral': False,
         })
         vm.volumes['other2'] = unittest.mock.Mock(**{
             'block_device.return_value.name': 'other',
             'block_device.return_value.path': '/dev/loop2',
             'block_device.return_value.devtype': 'disk',
             'block_device.return_value.domain': 'dom0',
-            'block_device.return_value.script': None,
+            'ephemeral': False,
         })
         assignments = [
             unittest.mock.Mock(**{
@@ -1604,11 +1640,13 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
                 'options': {'read-only': True},
                 'device.device_node': '/dev/loop0',
                 'device.backend_domain.name': 'backend0',
+                'device.backend_domain.features.check_with_template.return_value': '4.2',
             }),
             unittest.mock.Mock(**{
                 'options': {},
                 'device.device_node': '/dev/loop0',
                 'device.backend_domain.name': 'backend1',
+                'device.backend_domain.features.check_with_template.return_value': '4.2',
             }),
         ]
         vm.devices['block'].assignments = lambda persistent: assignments
@@ -1691,6 +1729,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         # pretend the VM is running...
         vm._qubesprop_xid = 3
         netvm.kernel = None
+        netvm._qubesprop_xid = 4
         test_qubesdb = TestQubesDB()
         mock_qubesdb.write.side_effect = test_qubesdb.write
         mock_qubesdb.rm.side_effect = test_qubesdb.rm
@@ -1836,8 +1875,10 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         vm.netvm = None
         vm.guivm = guivm
         vm.is_running = lambda: True
+        vm._qubesprop_xid = 2
         guivm.keyboard_layout = 'fr++'
         guivm.is_running = lambda: True
+        guivm._libvirt_domain = unittest.mock.Mock(**{'ID.return_value': 2})
         vm.events_enabled = True
         test_qubesdb = TestQubesDB()
         mock_qubesdb.write.side_effect = test_qubesdb.write
@@ -1885,7 +1926,9 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         vm.netvm = None
         vm.audiovm = audiovm
         vm.is_running = lambda: True
+        vm._qubesprop_xid = 2
         audiovm.is_running = lambda: True
+        audiovm._libvirt_domain = unittest.mock.Mock(**{'ID.return_value': 2})
         vm.events_enabled = True
         test_qubesdb = TestQubesDB()
         mock_qubesdb.write.side_effect = test_qubesdb.write
@@ -1957,8 +2000,10 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         vm.netvm = None
         vm.guivm = guivm
         vm.is_running = lambda: True
+        vm._qubesprop_xid = 2
         guivm.keyboard_layout = 'fr++'
         guivm.is_running = lambda: True
+        guivm._libvirt_domain = unittest.mock.Mock(**{'ID.return_value': 2})
         vm.events_enabled = True
         test_qubesdb = TestQubesDB()
         mock_qubesdb.write.side_effect = test_qubesdb.write
@@ -2010,8 +2055,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             self.assertEqual(test_qubesdb.data, expected)
 
 
-    @asyncio.coroutine
-    def coroutine_mock(self, mock, *args, **kwargs):
+    async def coroutine_mock(self, mock, *args, **kwargs):
         return mock(*args, **kwargs)
 
     @unittest.mock.patch('asyncio.create_subprocess_exec')
@@ -2021,7 +2065,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         vm = self.get_vm(cls=qubes.vm.standalonevm.StandaloneVM,
                          name='vm')
         vm.is_running = lambda: True
-        vm.is_qrexec_running = lambda: True
+        vm.is_qrexec_running = lambda stubdom=False: True
         vm.start = start_mock
         with self.subTest('running'):
             self.loop.run_until_complete(vm.run_service('test.service'))
@@ -2053,7 +2097,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         start_mock.reset_mock()
         with self.subTest('no_qrexec'):
             vm.is_running = lambda: True
-            vm.is_qrexec_running = lambda: False
+            vm.is_qrexec_running = lambda stubdom=False: False
             with self.assertRaises(qubes.exc.QubesVMError):
                 self.loop.run_until_complete(vm.run_service('test.service'))
             self.assertFalse(start_mock.called)
@@ -2063,7 +2107,7 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         start_mock.reset_mock()
         with self.subTest('other_user'):
             vm.is_running = lambda: True
-            vm.is_qrexec_running = lambda: True
+            vm.is_qrexec_running = lambda stubdom=False: True
             self.loop.run_until_complete(vm.run_service('test.service',
                                                         user='other'))
             mock_subprocess.assert_called_once_with(
@@ -2075,12 +2119,24 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
         start_mock.reset_mock()
         with self.subTest('other_source'):
             vm.is_running = lambda: True
-            vm.is_qrexec_running = lambda: True
+            vm.is_qrexec_running = lambda stubdom=False: True
             self.loop.run_until_complete(vm.run_service('test.service',
                                                         source='test-inst-vm'))
             mock_subprocess.assert_called_once_with(
                 '/usr/bin/qrexec-client', '-d', 'test-inst-vm',
                 'user:QUBESRPC test.service test-inst-vm')
+            self.assertFalse(start_mock.called)
+
+        mock_subprocess.reset_mock()
+        start_mock.reset_mock()
+        with self.subTest('stubdom'):
+            vm.is_running = lambda: True
+            vm.is_qrexec_running = lambda stubdom=True: True
+            self.loop.run_until_complete(vm.run_service('test.service',
+                                                        stubdom=True))
+            mock_subprocess.assert_called_once_with(
+                '/usr/bin/qrexec-client', '-d', 'test-inst-vm-dm',
+                'user:QUBESRPC test.service dom0')
             self.assertFalse(start_mock.called)
 
     @unittest.mock.patch('qubes.vm.qubesvm.QubesVM.run')
@@ -2218,3 +2274,31 @@ class TC_90_QubesVM(QubesVMTestsMixin, qubes.tests.QubesTestCase):
             fully_usable = vm.is_fully_usable()
             mock_os_path_exists.assert_not_called()
             self.assertEqual(fully_usable, True)
+
+    def test_800_reset_icon_event(self):
+        class TestVM2(qubes.vm.qubesvm.QubesVM):
+            event_fired = False
+            @qubes.events.handler('property-reset:icon')
+            def on_reset_icon(self, *_args, **_kwargs):
+                self.__class__.event_fired = True
+
+        def property_change(vm, property_name, new_value):
+            initial_icon = vm.icon
+            setattr(vm, property_name, new_value)
+            if vm.icon != initial_icon:
+                self.assertTrue(TestVM2.event_fired)
+                TestVM2.event_fired = False
+            else:
+                self.assertFalse(TestVM2.event_fired)
+
+        test_vm = TestVM2(
+            self.app, None, qid=100, name=qubes.tests.VMPREFIX + 'test',
+            label="blue")
+        property_change(test_vm, "label", "red")
+        property_change(test_vm, "label", "blue")
+
+        property_change(test_vm, "template_for_dispvms", False)
+        property_change(test_vm, "template_for_dispvms", True)
+
+    def test_801_ordering(self):
+        assert qubes.vm.qubesvm.QubesVM(self.app, None, qid=1, name="bogus") > qubes.vm.adminvm.AdminVM(self.app, None)

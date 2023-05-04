@@ -52,10 +52,10 @@ def get_timezone():
     if not tz_info:
         return None
     if tz_info.st_nlink > 1:
-        p = subprocess.Popen(['find', '/usr/share/zoneinfo',
-            '-inum', str(tz_info.st_ino), '-print', '-quit'],
-            stdout=subprocess.PIPE)
-        tz_path = p.communicate()[0].strip()
+        with subprocess.Popen(['find', '/usr/share/zoneinfo',
+                '-inum', str(tz_info.st_ino), '-print', '-quit'],
+                stdout=subprocess.PIPE) as p:
+            tz_path = p.communicate()[0].strip()
         return tz_path.replace(b'/usr/share/zoneinfo/', b'')
     return None
 
@@ -168,7 +168,20 @@ def systemd_notify():
         nofity_socket = '\0' + nofity_socket[1:]
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     sock.connect(nofity_socket)
-    sock.sendall(b'READY=1')
+    sock.sendall(b'READY=1\nSTATUS=qubesd online and operational\n')
+    sock.close()
+
+def systemd_extend_timeout():
+    """Extend systemd startup timeout by 60s"""
+    notify_socket = os.getenv('NOTIFY_SOCKET')
+    if not notify_socket:
+        return
+    if notify_socket.startswith('@'):
+        notify_socket = '\0' + notify_socket[1:]
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    sock.connect(notify_socket)
+    sock.sendall(b'EXTEND_TIMEOUT_USEC=60000000\n'
+                 b'STATUS=Cleaning up storage for stopped qubes\n')
     sock.close()
 
 def match_vm_name_with_special(vm, name):
@@ -232,21 +245,61 @@ def fsync_path(path):
     finally:
         os.close(fd)
 
-@asyncio.coroutine
-def coro_maybe(value):
-    if asyncio.iscoroutine(value):
-        return (yield from value)
-    return value
+async def coro_maybe(value):
+    return (await value) if asyncio.iscoroutine(value) else value
 
-@asyncio.coroutine
-def void_coros_maybe(values):
+_am_root = os.getuid() == 0
+
+# pylint: disable=redefined-builtin
+async def run_program(*args, check=True, input=None, sudo=False, **kwargs):
+    """Async version of subprocess.run()
+    """
+    if not _am_root and sudo:
+        args = ['sudo'] + list(args)
+    p = await asyncio.create_subprocess_exec(*args, **kwargs)
+    stdouterr = await p.communicate(input=input)
+    if check and p.returncode:
+        raise subprocess.CalledProcessError(p.returncode,
+                                                args[0], *stdouterr)
+    return p
+
+async def void_coros_maybe(values):
     ''' Ignore elements of the iterable values that are not coroutine
         objects. Run all coroutine objects to completion, concurrent
         with each other. If there were exceptions, raise the leftmost
         one (not necessarily chronologically first). Return nothing.
     '''
-    coros = [val for val in values if asyncio.iscoroutine(val)]
+    coros = [asyncio.create_task(val) for val in values
+             if asyncio.iscoroutine(val)]
     if coros:
-        done, _ = yield from asyncio.wait(coros)
+        done, _ = await asyncio.wait(coros)
         for task in done:
             task.result()  # re-raises exception if task failed
+
+def cryptsetup(*args):
+    """
+    Run cryptsetup with the given arguments.  This method returns a future.
+    """
+    prog = ('/usr/sbin/cryptsetup', *args)
+    return run_program(
+        *prog,
+        # otherwise cryptsetup tries to mlock() the entire locale archive :(
+        env={'LC_ALL':'C', **os.environ},
+        cwd='/',
+        stdin=subprocess.DEVNULL,
+        check=True,
+        sudo=True,
+    )
+
+
+def sanitize_stderr_for_log(untrusted_stderr: bytes) -> str:
+    """Helper function to sanitize qrexec service stderr for logging"""
+    # limit size
+    untrusted_stderr = untrusted_stderr[:4096]
+    # limit to subset of printable ASCII, especially do not allow newlines,
+    # control characters etc
+    allowed = string.ascii_letters + string.digits + string.punctuation + ' '
+    allowed_bytes = allowed.encode()
+    stderr = bytes(b if b in allowed_bytes else b'_'[0]
+                   for b in untrusted_stderr)
+    return stderr.decode('ascii')

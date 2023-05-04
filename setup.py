@@ -72,6 +72,7 @@ if __name__ == '__main__':
                 'qubes.ext.services = qubes.ext.services:ServicesExtension',
                 'qubes.ext.supported_features = qubes.ext.supported_features:SupportedFeaturesExtension',
                 'qubes.ext.windows = qubes.ext.windows:WindowsFeatures',
+                'qubes.ext.vm_config = qubes.ext.vm_config:VMConfig',
             ],
             'qubes.devices': [
                 'pci = qubes.ext.pci:PCIDevice',
@@ -84,6 +85,7 @@ if __name__ == '__main__':
                 'linux-kernel = qubes.storage.kernels:LinuxKernel',
                 'lvm_thin = qubes.storage.lvm:ThinPool',
                 'callback = qubes.storage.callback:CallbackPool',
+                'zfs = qubes.storage.zfs:ZFSPool',
             ],
             'qubes.tests.storage': [
                 'test = qubes.tests.storage:TestPool',
@@ -92,5 +94,6 @@ if __name__ == '__main__':
                 'linux-kernel = qubes.storage.kernels:LinuxKernel',
                 'lvm_thin = qubes.storage.lvm:ThinPool',
                 'callback = qubes.storage.callback:CallbackPool',
+                'zfs = qubes.storage.zfs:ZFSPool',
             ],
         })

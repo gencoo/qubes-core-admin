@@ -43,7 +43,7 @@ import qubes.storage
 # properties defined in API
 volume_properties = [
     'pool', 'vid', 'size', 'usage', 'rw', 'source', 'path',
-    'save_on_stop', 'snap_on_start', 'revisions_to_keep']
+    'save_on_stop', 'snap_on_start', 'revisions_to_keep', 'ephemeral']
 
 
 class AdminAPITestCase(qubes.tests.QubesTestCase):
@@ -211,6 +211,8 @@ class TC_00_VMs(AdminAPITestCase):
     def test_027_vm_property_get_all(self):
         # any string property, test \n encoding
         self.vm.kernelopts = 'opt1\nopt2\nopt3\\opt4'
+        # let it have 'dns' property
+        self.vm.provides_network = True
         with unittest.mock.patch.object(self.vm, 'property_list') as list_mock:
             list_mock.return_value = [
                 self.vm.property_get_def('name'),
@@ -223,11 +225,13 @@ class TC_00_VMs(AdminAPITestCase):
                 self.vm.property_get_def('qrexec_timeout'),
                 self.vm.property_get_def('qid'),
                 self.vm.property_get_def('updateable'),
+                self.vm.property_get_def('dns'),
             ]
             value = self.call_mgmt_func(b'admin.vm.property.GetAll', b'test-vm1')
         self.maxDiff = None
         expected = '''debug default=True type=bool False
 default_user default=True type=str user
+dns default=True type=str 10.139.1.1 10.139.1.2
 klass default=True type=str AppVM
 label default=False type=label red
 name default=False type=str test-vm1
@@ -237,6 +241,29 @@ updateable default=True type=bool False
 kernelopts default=False type=str opt1\\nopt2\\nopt3\\\\opt4
 netvm default=True type=vm \n'''
         self.assertEqual(value, expected)
+
+    def test_028_vm_property_get_list(self):
+        self.vm.provides_network = True
+        value = self.call_mgmt_func(
+            b'admin.vm.property.Get',
+            b'test-vm1',
+            b'dns')
+        self.assertEqual(value, 'default=True type=str 10.139.1.1 10.139.1.2')
+
+    def test_029_vm_property_get_list_none(self):
+        value = self.call_mgmt_func(
+            b'admin.vm.property.Get',
+            b'test-vm1',
+            b'dns')
+        self.assertEqual(value, 'default=True type=str ')
+
+    def test_029_vm_property_get_list_default(self):
+        self.vm.provides_network = True
+        value = self.call_mgmt_func(
+            b'admin.vm.property.GetDefault',
+            b'test-vm1',
+            b'dns')
+        self.assertEqual(value, 'type=str 10.139.1.1 10.139.1.2')
 
     def test_030_vm_property_set_vm(self):
         netvm = self.app.add_new_vm('AppVM', label='red', name='test-net',
@@ -579,6 +606,22 @@ netvm default=True type=vm \n'''
         self.assertEqual(self.vm.storage.mock_calls,
             [unittest.mock.call.resize('private', 1024000000)])
 
+    def test_120_vm_volume_resize_zero(self):
+        self.vm.volumes = unittest.mock.MagicMock()
+        volumes_conf = {
+            'keys.return_value': ['root', 'private', 'volatile', 'kernel'],
+        }
+        self.vm.volumes.configure_mock(**volumes_conf)
+        self.vm.storage = unittest.mock.Mock()
+        self.vm.storage.resize.side_effect = self.dummy_coro
+        value = self.call_mgmt_func(b'admin.vm.volume.Resize',
+            b'test-vm1', b'private', b'0')
+        self.assertIsNone(value)
+        self.assertEqual(self.vm.volumes.mock_calls,
+            [unittest.mock.call.keys()])
+        self.assertEqual(self.vm.storage.mock_calls,
+            [unittest.mock.call.resize('private', 0)])
+
     def test_120_vm_volume_resize_invalid_size1(self):
         self.vm.volumes = unittest.mock.MagicMock()
         volumes_conf = {
@@ -587,7 +630,7 @@ netvm default=True type=vm \n'''
         self.vm.volumes.configure_mock(**volumes_conf)
         self.vm.storage = unittest.mock.Mock()
         self.vm.storage.resize.side_effect = self.dummy_coro
-        with self.assertRaises(qubes.api.PermissionDenied):
+        with self.assertRaises(qubes.api.ProtocolError):
             self.call_mgmt_func(b'admin.vm.volume.Resize',
                 b'test-vm1', b'private', b'no-int-size')
         self.assertEqual(self.vm.volumes.mock_calls,
@@ -602,9 +645,39 @@ netvm default=True type=vm \n'''
         self.vm.volumes.configure_mock(**volumes_conf)
         self.vm.storage = unittest.mock.Mock()
         self.vm.storage.resize.side_effect = self.dummy_coro
-        with self.assertRaises(qubes.api.PermissionDenied):
+        with self.assertRaises(qubes.api.ProtocolError):
             self.call_mgmt_func(b'admin.vm.volume.Resize',
                 b'test-vm1', b'private', b'-1')
+        self.assertEqual(self.vm.volumes.mock_calls,
+            [unittest.mock.call.keys()])
+        self.assertFalse(self.vm.storage.called)
+
+    def test_120_vm_volume_resize_invalid_size3(self):
+        self.vm.volumes = unittest.mock.MagicMock()
+        volumes_conf = {
+            'keys.return_value': ['root', 'private', 'volatile', 'kernel'],
+        }
+        self.vm.volumes.configure_mock(**volumes_conf)
+        self.vm.storage = unittest.mock.Mock()
+        self.vm.storage.resize.side_effect = self.dummy_coro
+        with self.assertRaises(qubes.api.ProtocolError):
+            self.call_mgmt_func(b'admin.vm.volume.Resize',
+                b'test-vm1', b'private', b'10000000000000000000')
+        self.assertEqual(self.vm.volumes.mock_calls,
+            [unittest.mock.call.keys()])
+        self.assertFalse(self.vm.storage.called)
+
+    def test_120_vm_volume_resize_invalid_size4(self):
+        self.vm.volumes = unittest.mock.MagicMock()
+        volumes_conf = {
+            'keys.return_value': ['root', 'private', 'volatile', 'kernel'],
+        }
+        self.vm.volumes.configure_mock(**volumes_conf)
+        self.vm.storage = unittest.mock.Mock()
+        self.vm.storage.resize.side_effect = self.dummy_coro
+        with self.assertRaises(qubes.api.ProtocolError):
+            self.call_mgmt_func(b'admin.vm.volume.Resize',
+                b'test-vm1', b'private', b'01')
         self.assertEqual(self.vm.volumes.mock_calls,
             [unittest.mock.call.keys()])
         self.assertFalse(self.vm.storage.called)
@@ -742,7 +815,7 @@ netvm default=True type=vm \n'''
 
         add_pool_mock, self.app.add_pool = self.coroutine_mock()
 
-        with self.assertRaises(qubes.api.PermissionDenied):
+        with self.assertRaises(qubes.exc.QubesException):
             self.call_mgmt_func(b'admin.pool.Add', b'dom0',
                 b'no-such-driver', b'name=test-pool\nparam1=some-value\n')
         self.assertEqual(mock_drivers.mock_calls, [unittest.mock.call()])
@@ -1013,8 +1086,7 @@ netvm default=True type=vm \n'''
     def test_220_start(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.start = coroutine_mock
         value = self.call_mgmt_func(b'admin.vm.Start', b'test-vm1')
@@ -1024,8 +1096,7 @@ netvm default=True type=vm \n'''
     def test_230_shutdown(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.shutdown = coroutine_mock
         value = self.call_mgmt_func(b'admin.vm.Shutdown', b'test-vm1')
@@ -1035,8 +1106,7 @@ netvm default=True type=vm \n'''
     def test_231_shutdown_force(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.shutdown = coroutine_mock
         value = self.call_mgmt_func(b'admin.vm.Shutdown', b'test-vm1', b'force')
@@ -1046,8 +1116,7 @@ netvm default=True type=vm \n'''
     def test_232_shutdown_wait(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.shutdown = coroutine_mock
         value = self.call_mgmt_func(b'admin.vm.Shutdown', b'test-vm1', b'wait')
@@ -1057,8 +1126,7 @@ netvm default=True type=vm \n'''
     def test_233_shutdown_wait_force(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.shutdown = coroutine_mock
         value = self.call_mgmt_func(b'admin.vm.Shutdown', b'test-vm1', b'wait+force')
@@ -1068,8 +1136,7 @@ netvm default=True type=vm \n'''
     def test_234_shutdown_force_wait(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.shutdown = coroutine_mock
         value = self.call_mgmt_func(b'admin.vm.Shutdown', b'test-vm1', b'force+wait')
@@ -1079,8 +1146,7 @@ netvm default=True type=vm \n'''
     def test_234_shutdown_force_wait_invalid(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.shutdown = coroutine_mock
         with self.assertRaises(qubes.api.PermissionDenied):
@@ -1090,8 +1156,7 @@ netvm default=True type=vm \n'''
     def test_240_pause(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.pause = coroutine_mock
         value = self.call_mgmt_func(b'admin.vm.Pause', b'test-vm1')
@@ -1101,8 +1166,7 @@ netvm default=True type=vm \n'''
     def test_250_unpause(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.unpause = coroutine_mock
         value = self.call_mgmt_func(b'admin.vm.Unpause', b'test-vm1')
@@ -1112,8 +1176,7 @@ netvm default=True type=vm \n'''
     def test_260_kill(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         self.vm.kill = coroutine_mock
         value = self.call_mgmt_func(b'admin.vm.Kill', b'test-vm1')
@@ -1125,8 +1188,7 @@ netvm default=True type=vm \n'''
         mgmt_obj = qubes.api.admin.QubesAdminAPI(self.app, b'dom0', b'admin.Events',
             b'dom0', b'', send_event=send_event)
 
-        @asyncio.coroutine
-        def fire_event():
+        async def fire_event():
             self.vm.fire_event('test-event', arg1='abc')
             mgmt_obj.cancel()
 
@@ -1149,8 +1211,7 @@ netvm default=True type=vm \n'''
         mgmt_obj = qubes.api.admin.QubesAdminAPI(self.app, b'dom0', b'admin.Events',
             b'dom0', b'', send_event=send_event)
 
-        @asyncio.coroutine
-        def fire_event():
+        async def fire_event():
             self.vm.fire_event('test-event', arg1='abc')
             # add VM _after_ starting admin.Events call
             vm = self.app.add_new_vm('AppVM', label='red', name='test-vm2',
@@ -1191,8 +1252,7 @@ netvm default=True type=vm \n'''
                     b'admin.Events',
                     b'dom0', b'', send_event=send_event)
 
-                @asyncio.coroutine
-                def fire_event():
+                async def fire_event():
                     # add VM _after_ starting admin.Events call
                     vm = self.app.add_new_vm('AppVM', label='red',
                         name='test-vm2',
@@ -1329,22 +1389,41 @@ netvm default=True type=vm \n'''
         self.assertEqual(self.vm.features['test-feature'], '')
         self.assertTrue(self.app.save.called)
 
-    def test_320_feature_set_invalid(self):
+    def test_322_feature_set_invalid(self):
         with self.assertRaises(UnicodeDecodeError):
             self.call_mgmt_func(b'admin.vm.feature.Set',
                 b'test-vm1', b'test-feature', b'\x02\x03\xffsome-value')
         self.assertNotIn('test-feature', self.vm.features)
         self.assertFalse(self.app.save.called)
 
-    @asyncio.coroutine
-    def dummy_coro(self, *args, **kwargs):
+    def test_323_feature_set_service_too_long(self):
+        with self.assertRaises(qubes.exc.QubesValueError):
+            self.call_mgmt_func(b'admin.vm.feature.Set',
+                b'test-vm1', b'service.' + b'a' * 49, b'1')
+        self.assertNotIn('test-feature', self.vm.features)
+        self.assertFalse(self.app.save.called)
+
+    def test_324_feature_set_service_bad_name(self):
+        with self.assertRaises(qubes.exc.QubesValueError):
+            self.call_mgmt_func(b'admin.vm.feature.Set',
+                b'test-vm1', b'service.0')
+        self.assertNotIn('test-feature', self.vm.features)
+        self.assertFalse(self.app.save.called)
+
+    def test_325_feature_set_service_empty_name(self):
+        with self.assertRaises(qubes.exc.QubesValueError):
+            self.call_mgmt_func(b'admin.vm.feature.Set',
+                b'test-vm1', b'service.')
+        self.assertNotIn('test-feature', self.vm.features)
+        self.assertFalse(self.app.save.called)
+
+    async def dummy_coro(self, *args, **kwargs):
         pass
 
     def coroutine_mock(self):
         func_mock = unittest.mock.Mock()
 
-        @asyncio.coroutine
-        def coroutine_mock(*args, **kwargs):
+        async def coroutine_mock(*args, **kwargs):
             return func_mock(*args, **kwargs)
         return func_mock, coroutine_mock
 
@@ -2355,8 +2434,7 @@ netvm default=True type=vm \n'''
             'passphrase_vm: test-vm1\n'
         )
 
-        @asyncio.coroutine
-        def service_passphrase(*args, **kwargs):
+        async def service_passphrase(*args, **kwargs):
             return (b'pass-from-vm', None)
 
         mock_backup.return_value.backup_do.side_effect = self.dummy_coro
@@ -2668,7 +2746,7 @@ netvm default=True type=vm \n'''
 
     def test_661_pool_set_revisions_to_keep_negative(self):
         self.app.pools['test-pool'] = unittest.mock.Mock()
-        with self.assertRaises(qubes.api.PermissionDenied):
+        with self.assertRaises(qubes.api.ProtocolError):
             self.call_mgmt_func(b'admin.pool.Set.revisions_to_keep',
                 b'dom0', b'test-pool', b'-2')
         self.assertEqual(self.app.pools['test-pool'].mock_calls, [])
@@ -2678,6 +2756,23 @@ netvm default=True type=vm \n'''
         self.app.pools['test-pool'] = unittest.mock.Mock()
         with self.assertRaises(qubes.api.ProtocolError):
             self.call_mgmt_func(b'admin.pool.Set.revisions_to_keep',
+                b'dom0', b'test-pool', b'abc')
+        self.assertEqual(self.app.pools['test-pool'].mock_calls, [])
+        self.assertFalse(self.app.save.called)
+
+    def test_663_pool_set_ephemeral(self):
+        self.app.pools['test-pool'] = unittest.mock.Mock()
+        value = self.call_mgmt_func(b'admin.pool.Set.ephemeral_volatile',
+            b'dom0', b'test-pool', b'true')
+        self.assertIsNone(value)
+        self.assertEqual(self.app.pools['test-pool'].mock_calls, [])
+        self.assertEqual(self.app.pools['test-pool'].ephemeral_volatile, True)
+        self.app.save.assert_called_once_with()
+
+    def test_664_pool_set_ephemeral_not_a_boolean(self):
+        self.app.pools['test-pool'] = unittest.mock.Mock()
+        with self.assertRaises(qubes.api.ProtocolError):
+            self.call_mgmt_func(b'admin.pool.Set.ephemeral_volatile',
                 b'dom0', b'test-pool', b'abc')
         self.assertEqual(self.app.pools['test-pool'].mock_calls, [])
         self.assertFalse(self.app.save.called)
@@ -2705,7 +2800,7 @@ netvm default=True type=vm \n'''
         }
         self.vm.volumes.configure_mock(**volumes_conf)
         self.vm.storage = unittest.mock.Mock()
-        with self.assertRaises(qubes.api.PermissionDenied):
+        with self.assertRaises(qubes.api.ProtocolError):
             self.call_mgmt_func(b'admin.vm.volume.Set.revisions_to_keep',
                 b'test-vm1', b'private', b'-2')
 
@@ -2744,8 +2839,36 @@ netvm default=True type=vm \n'''
         self.vm.volumes.configure_mock(**volumes_conf)
         self.vm.storage = unittest.mock.Mock()
         with self.assertRaises(qubes.api.ProtocolError):
-            self.call_mgmt_func(b'admin.vm.volume.Set.revisions_to_keep',
+            self.call_mgmt_func(b'admin.vm.volume.Set.rw',
                 b'test-vm1', b'private', b'abc')
+        self.assertFalse(self.app.save.called)
+
+    def test_685_vm_volume_set_ephemeral(self):
+        self.vm.volumes = unittest.mock.MagicMock()
+        volumes_conf = {
+            'keys.return_value': ['root', 'private', 'volatile', 'kernel'],
+        }
+        self.vm.volumes.configure_mock(**volumes_conf)
+        self.vm.storage = unittest.mock.Mock()
+        value = self.call_mgmt_func(b'admin.vm.volume.Set.ephemeral',
+            b'test-vm1', b'volatile', b'True')
+        self.assertIsNone(value)
+        self.assertEqual(self.vm.volumes.mock_calls,
+            [unittest.mock.call.keys(),
+            ('__getitem__', ('volatile',), {})])
+        self.assertEqual(self.vm.volumes['volatile'].ephemeral, True)
+        self.app.save.assert_called_once_with()
+
+    def test_686_vm_volume_set_ephemeral_invalid(self):
+        self.vm.volumes = unittest.mock.MagicMock()
+        volumes_conf = {
+            'keys.return_value': ['root', 'private', 'volatile', 'kernel'],
+        }
+        self.vm.volumes.configure_mock(**volumes_conf)
+        self.vm.storage = unittest.mock.Mock()
+        with self.assertRaises(qubes.api.ProtocolError):
+            self.call_mgmt_func(b'admin.vm.volume.Set.ephemeral',
+                b'test-vm1', b'volatile', b'abc')
         self.assertFalse(self.app.save.called)
 
     def test_690_vm_console(self):
@@ -2805,8 +2928,7 @@ netvm default=True type=vm \n'''
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpfile = os.path.join(tmpdir, 'testfile')
 
-            @asyncio.coroutine
-            def coroutine_mock(*args, **kwargs):
+            async def coroutine_mock(*args, **kwargs):
                 return tmpfile
 
             self.vm.volumes = unittest.mock.MagicMock()

@@ -54,7 +54,6 @@ class ServicesExtension(qubes.ext.Extension):
             vm.log.warning("Cannot write to {}".format(
                 qubes.config.system_path['dom0_services_dir']))
 
-    # pylint: disable=no-self-use
     @qubes.ext.handler('domain-qdb-create')
     def on_domain_qdb_create(self, vm, event):
         """Actually export features"""
@@ -89,13 +88,28 @@ class ServicesExtension(qubes.ext.Extension):
             # balancing state anymore
             del vm.features['service.meminfo-writer']
 
-        if not vm.is_running():
-            return
         if not feature.startswith('service.'):
             return
         service = feature[len('service.'):]
+        # qubesdb keys are limited to 63 bytes, and "/qubes-service/" is
+        # 15 bytes.  That leaves 48 for the service name.
+        if len(service) > 48:
+            raise qubes.exc.QubesValueError(
+                    'Service name must not exceed 48 bytes')
+        # The empty string is not a valid file name.
+        if not service:
+            raise qubes.exc.QubesValueError('Empty service name not allowed')
+        # Require service names to start with an ASCII letter.  This implicitly
+        # rejects names which start with '-' (which could be interpreted as an
+        # option) or are '.' or '..'.
+        if not (('a' <= service[0] <= 'z') or ('A' <= service[0] <= 'Z')):
+            raise qubes.exc.QubesValueError(
+                    'Service name must start with an ASCII letter')
+
+        if not vm.is_running():
+            return
         # forcefully convert to '0' or '1'
-        vm.untrusted_qdb.write('/qubes-service/{}'.format(service),
+        vm.untrusted_qdb.write('/qubes-service/' + service,
                                str(int(bool(value))))
 
         if vm.name == "dom0":
@@ -124,7 +138,7 @@ class ServicesExtension(qubes.ext.Extension):
     @qubes.ext.handler('domain-load')
     def on_domain_load(self, vm, event):
         """Migrate meminfo-writer service into maxmem"""
-        # pylint: disable=no-self-use,unused-argument
+        # pylint: disable=unused-argument
         if 'service.meminfo-writer' in vm.features:
             # if was set to false, force maxmem=0
             # otherwise, simply ignore as the default is fine
@@ -145,7 +159,7 @@ class ServicesExtension(qubes.ext.Extension):
     @qubes.ext.handler('features-request')
     def supported_services(self, vm, event, untrusted_features):
         """Handle advertisement of supported services"""
-        # pylint: disable=no-self-use,unused-argument
+        # pylint: disable=unused-argument
 
         if getattr(vm, 'template', None):
             vm.log.warning(

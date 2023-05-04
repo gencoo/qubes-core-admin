@@ -24,6 +24,7 @@ import os
 import shutil
 import subprocess
 import sys
+import unittest
 
 import qubes.tests
 
@@ -277,6 +278,7 @@ class SaltVMTestMixin(SaltTestMixin):
             template_for_dispvms=True, name=dispvm_tpl_name)
         self.loop.run_until_complete(dispvm_tpl.create_on_disk())
         self.app.default_dispvm = dispvm_tpl
+        self.app.management_dispvm = dispvm_tpl
 
     def tearDown(self):
         self.app.default_dispvm = None
@@ -309,7 +311,19 @@ class SaltVMTestMixin(SaltTestMixin):
             'Full output: ' + state_output)
         state_id = 'file_|-/home/user/testfile_|-/home/user/testfile_|-managed'
         # drop the header
-        state_output_json = json.loads(state_output[len(expected_output):])
+        json_data = state_output[len(expected_output):]
+        # workaround for https://github.com/saltstack/salt/issues/60476
+        # (fixed upstream, but hasen't flowed into Fedora yet)
+        if "Setuptools is replacing distutils" in json_data:
+            json_data = "\n".join(
+                l for l in json_data.splitlines()
+                if "Setuptools is replacing distutils" not in l)
+        try:
+            state_output_json = json.loads(json_data)
+        except json.decoder.JSONDecodeError as e:
+            self.fail("JSON output decoding error: {}\n{}".format(
+                e, json_data
+            ))
         state_output_json = state_output_json[vmname][state_id]
         try:
             del state_output_json['duration']
@@ -369,16 +383,46 @@ class SaltVMTestMixin(SaltTestMixin):
                 f.write('base:\n')
                 f.write('  {}:\n'.format(vmname))
                 f.write('    - test_salt.{}\n'.format(state))
+        # test with some jinja templating
+        state = 'jinja'
+        with open(os.path.join(self.salt_testdir, state + '.sls'), 'w') as f:
+            f.write("{% set ex = salt['cmd.shell']('echo what') %}\n")
+            f.write("{% if ex.startswith('what') %}\n")
+            f.write("/home/user/{}:\n".format(state))
+            f.write("  file.managed:\n")
+            f.write("    - contents: |\n")
+            f.write("        this is test\n")
+            f.write("{% endif %}\n")
+            f.write("/home/user/test2:\n")
+            f.write("  file.managed:\n")
+            f.write("    - contents: |\n")
+            f.write("        {{ grains['id'] }}\n")
+        with open(os.path.join(self.salt_testdir, state + '.top'), 'w') as f:
+            f.write('base:\n')
+            f.write('  {}:\n'.format(vmname))
+            f.write('    - test_salt.{}\n'.format(state))
 
         self.dom0_salt_call_json(['top.enable', 'test_salt.something'])
         self.dom0_salt_call_json(['top.enable', 'test_salt.something2'])
+        self.dom0_salt_call_json(['top.enable', 'test_salt.jinja'])
         state_output = self.salt_call(
             ['--skip-dom0', '--show-output', '--targets=' + vmname,
              'state.highstate'])
         expected_output = vmname + ':\n'
         self.assertTrue(state_output.startswith(expected_output),
             'Full output: ' + state_output)
-        state_output_json = json.loads(state_output[len(expected_output):])
+        json_data = state_output[len(expected_output):]
+        # workaround for https://github.com/saltstack/salt/issues/60476
+        # (fixed upstream, but hasn't flowed into Fedora yet)
+        if "Setuptools is replacing distutils" in json_data:
+            json_data = "\n".join(
+                l for l in json_data.splitlines()
+                if "Setuptools is replacing distutils" not in l)
+        try:
+            state_output_json = json.loads(json_data)
+        except json.decoder.JSONDecodeError as e:
+            self.fail('{}: {}'.format(e, json_data))
+        states = states + ('jinja',)
         for state in states:
             state_id = \
                 'file_|-/home/user/{0}_|-/home/user/{0}_|-managed'.format(state)
@@ -393,6 +437,105 @@ class SaltVMTestMixin(SaltTestMixin):
                 'cat /home/user/' + state))
             self.assertEqual(stdout, b'this is test\n')
             self.assertEqual(stderr, b'')
+
+            stdout, stderr = self.loop.run_until_complete(self.vm.run_for_stdio(
+                'cat /home/user/' + state))
+            self.assertEqual(stdout, b'this is test\n')
+            self.assertEqual(stderr, b'')
+
+        # and finally verify if grain id is correct
+        stdout, stderr = self.loop.run_until_complete(self.vm.run_for_stdio(
+            'cat /home/user/test2'))
+        self.assertEqual(stdout, '{}\n'.format(self.vm.name).encode())
+        self.assertEqual(stderr, b'')
+
+    @unittest.expectedFailure
+    def test_002_grans_id(self):
+        vmname = self.make_vm_name('target')
+        tplname = self.make_vm_name('tpl')
+        self.test_template = self.app.add_new_vm('TemplateVM',
+            name=tplname, label='red')
+        self.test_template.features.update(
+            self.app.domains[self.template].features)
+        self.loop.run_until_complete(
+            self.test_template.clone_disk_files(self.app.domains[self.template]))
+        self.vm = self.app.add_new_vm('AppVM', name=vmname, label='red',
+                                      template=self.test_template)
+        self.loop.run_until_complete(self.vm.create_on_disk())
+        # test with some jinja templating
+        with open(os.path.join(self.salt_testdir, 'jinja.sls'), 'w') as f:
+            f.write("/home/user/test2-{{ grains['id'] }}:\n")
+            f.write("  file.managed:\n")
+            f.write("    - contents: |\n")
+            f.write("        {{ grains['id'] }}\n")
+        with open(os.path.join(self.salt_testdir, 'jinja.top'), 'w') as f:
+            f.write('base:\n')
+            f.write('  {}:\n'.format(vmname))
+            f.write('    - test_salt.jinja\n')
+            f.write('  {}:\n'.format(tplname))
+            f.write('    - test_salt.jinja\n')
+
+        self.dom0_salt_call_json(['top.enable', 'test_salt.jinja'])
+        state_output = self.salt_call(
+            ['--skip-dom0', '--show-output',
+             '--targets={},{}'.format(tplname, vmname),
+             'state.highstate'])
+        self.assertIn(tplname + ':\n', state_output)
+        self.assertIn(vmname + ':\n', state_output)
+        tpl_output, _, appvm_output = state_output.partition(vmname + ':\n')
+        self.assertTrue(tpl_output.startswith(tplname + ':\n'),
+            'Full output: ' + state_output)
+        tpl_output = tpl_output[len(tplname + ':\n'):]
+
+        for name, output in ((tplname, tpl_output), (vmname, appvm_output)):
+            # workaround for https://github.com/saltstack/salt/issues/60476
+            # (fixed upstream, but hasn't flowed into Fedora yet)
+            if "Setuptools is replacing distutils" in output:
+                output = "\n".join(
+                    l for l in output.splitlines()
+                    if "Setuptools is replacing distutils" not in l)
+            try:
+                state_output_json = json.loads(output)
+            except json.decoder.JSONDecodeError as e:
+                self.fail('{}: {}'.format(e, output))
+            state_id = \
+                'file_|-/home/user/test2-{0}_|-/home/user/test2-{0}_|-managed'.format(name)
+            # drop the header
+            self.assertIn(state_id, state_output_json[name])
+            state_output_single = state_output_json[name][state_id]
+
+            self.assertTrue(state_output_single['result'])
+            self.assertNotEqual(state_output_single['changes'], {})
+
+    def test_003_update(self):
+        vmname = self.make_vm_name('target')
+        self.vm = self.app.add_new_vm('AppVM', name=vmname, label='red')
+        self.loop.run_until_complete(self.vm.create_on_disk())
+        # start the VM manually, so it stays running after applying salt state
+        self.loop.run_until_complete(self.vm.start())
+        state_output = self.salt_call(
+            ['--skip-dom0', '--show-output', '--targets=' + vmname,
+             'state.sls', 'update.qubes-vm'])
+        expected_output = vmname + ':\n'
+        self.assertTrue(state_output.startswith(expected_output),
+            'Full output: ' + state_output)
+        json_data = state_output[len(expected_output):]
+        # workaround for https://github.com/saltstack/salt/issues/60476
+        # (fixed upstream, but hasn't flowed into Fedora yet)
+        if "Setuptools is replacing distutils" in json_data:
+            json_data = "\n".join(
+                l for l in json_data.splitlines()
+                if "Setuptools is replacing distutils" not in l)
+        try:
+            state_output_json = json.loads(json_data)
+        except json.decoder.JSONDecodeError as e:
+            self.fail('{}: {}'.format(e, json_data))
+        self.assertIn(vmname, state_output_json)
+        self.assertNotEqual(state_output_json[vmname], {})
+        for state, result in state_output_json[vmname].items():
+            self.assertTrue(
+                result['result'],
+                "State {} failed: {!r}".format(state, result))
 
 
 def create_testcases_for_templates():

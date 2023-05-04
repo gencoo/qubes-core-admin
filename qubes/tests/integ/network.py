@@ -78,6 +78,9 @@ class VmNetworkingMixin(object):
         self.loop.run_until_complete(self.testnetvm.create_on_disk())
         self.testnetvm.provides_network = True
         self.testnetvm.netvm = None
+        # avoid races with NetworkManager, self.configure_netvm() configures
+        # everything directly
+        self.testnetvm.features['service.network-manager'] = False
         self.testvm1 = self.app.add_new_vm(qubes.vm.appvm.AppVM,
             name=self.make_vm_name('vm1'),
             label='red')
@@ -98,7 +101,7 @@ class VmNetworkingMixin(object):
 
     def tearDown(self):
         # collect more info on failure
-        if self._outcome and not self._outcome.success:
+        if not self.success():
             for vm in (self.testnetvm, self.testvm1, getattr(self, 'proxy', None)):
                 if vm is None:
                     continue
