@@ -44,6 +44,9 @@
                     <type arch="x86_64" machine="xenpv">linux</type>
                 {% elif bug("Bad virt mode %r", vm.virt_mode) %}{% endif %}
                 <kernel>{{ vm.storage.kernels_dir }}/vmlinuz</kernel>
+                {% if vm.vcpus == 2 %}
+                    <initrd>{{ vm.storage.kernels_dir }}/initramfs</initrd>
+                {% endif %}
                 <!--
                     <initrd>{{ vm.storage.kernels_dir }}/initramfs</initrd>
                 -->
